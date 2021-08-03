@@ -403,7 +403,7 @@ USkeletalMesh* FglTFRuntimeParser::CreateSkeletalMeshFromLODs(TSharedRef<FglTFRu
 				FString MorphTargetName = MorphTarget.Name;
 				if (MorphTargetName.IsEmpty())
 				{
-					FString::Printf(TEXT("MorphTarget_%d"), MorphTargetIndex);
+					MorphTargetName = FString::Printf(TEXT("MorphTarget_%d"), MorphTargetIndex);
 				}
 				MorphTargetIndex++;
 
@@ -702,7 +702,7 @@ USkeletalMesh* FglTFRuntimeParser::FinalizeSkeletalMeshWithLODs(TSharedRef<FglTF
 				FString MorphTargetName = MorphTargetData.Name;
 				if (MorphTargetName.IsEmpty())
 				{
-					FString::Printf(TEXT("MorphTarget_%d"), MorphTargetIndex);
+					MorphTargetName = FString::Printf(TEXT("MorphTarget_%d"), MorphTargetIndex);
 				}
 				MorphTargetIndex++;
 				UMorphTarget* MorphTarget = NewObject<UMorphTarget>(SkeletalMeshContext->SkeletalMesh, *MorphTargetName, RF_Public);
@@ -741,7 +741,12 @@ USkeletalMesh* FglTFRuntimeParser::FinalizeSkeletalMeshWithLODs(TSharedRef<FglTF
 		}
 #if WITH_EDITOR
 		IMeshBuilderModule& MeshBuilderModule = IMeshBuilderModule::GetForRunningPlatform();
+#if ENGINE_MAJOR_VERSION > 4 || ENGINE_MINOR_VERSION >= 27
+		FSkeletalMeshBuildParameters SkeletalMeshBuildParameters(SkeletalMeshContext->SkeletalMesh, GetTargetPlatformManagerRef().GetRunningTargetPlatform(), LODIndex, false);
+		if (!MeshBuilderModule.BuildSkeletalMesh(SkeletalMeshBuildParameters))
+#else
 		if (!MeshBuilderModule.BuildSkeletalMesh(SkeletalMeshContext->SkeletalMesh, LODIndex, false))
+#endif
 		{
 			return nullptr;
 		}

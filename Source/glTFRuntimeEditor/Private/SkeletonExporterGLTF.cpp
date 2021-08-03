@@ -1,4 +1,4 @@
-// Copyright 2020, Roberto De Ioris.
+// Copyright 2020-2021, Roberto De Ioris.
 
 
 #include "SkeletonExporterGLTF.h"
@@ -7,6 +7,10 @@ USkeletonExporterGLTF::USkeletonExporterGLTF(const FObjectInitializer& ObjectIni
 	: Super(ObjectInitializer)
 {
 	SupportedClass = USkeleton::StaticClass();
+	FormatExtension.Add(TEXT("gltf"));
+	PreferredFormatIndex = 0;
+	FormatDescription.Add(TEXT("glTF Embedded file"));
+	bText = true;
 }
 
 void FglTFExportContextSkeleton::GetSkeletonBoneChildren(const FReferenceSkeleton& SkeletonRef, const int32 ParentBoneIndex, TArray<int32>& BoneChildrenIndices)
