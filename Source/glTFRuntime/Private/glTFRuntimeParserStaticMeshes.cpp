@@ -1,7 +1,6 @@
-// Copyright 2020, Roberto De Ioris.
+// Copyright 2020-2021, Roberto De Ioris.
 
 #include "glTFRuntimeParser.h"
-#include "StaticMeshDescription.h"
 #include "StaticMeshOperations.h"
 #include "Engine/StaticMeshSocket.h"
 #if WITH_EDITOR
@@ -13,19 +12,59 @@ UStaticMesh* FglTFRuntimeParser::LoadStaticMesh_Internal(TArray<TSharedRef<FJson
 {
 
 	UStaticMesh* StaticMesh = NewObject<UStaticMesh>(StaticMeshConfig.Outer ? StaticMeshConfig.Outer : GetTransientPackage(), NAME_None, RF_Public);
+#if PLATFORM_ANDROID || PLATFORM_IOS
+	StaticMesh->bAllowCPUAccess = false;
+#else
 	StaticMesh->bAllowCPUAccess = StaticMeshConfig.bAllowCPUAccess;
+#endif
+
+#if ENGINE_MAJOR_VERSION > 4 || (ENGINE_MINOR_VERSION > 26)
+	StaticMesh->SetIsBuiltAtRuntime(true);
+#endif
+	StaticMesh->NeverStream = true;
 
 	bool bHasVertexColors = false;
 	FVector LOD0PivotDelta = FVector::ZeroVector;
 
-	TArray<UStaticMeshDescription*> MeshDescriptions;
+	FStaticMeshRenderData* RenderData = nullptr;
 
-	TArray<uint32> LOD0CPUVertexInstancesIDs;
+#if ENGINE_MAJOR_VERSION > 4 || (ENGINE_MINOR_VERSION > 26)
+	if (StaticMesh->GetRenderData())
+	{
+		StaticMesh->GetRenderData()->ReleaseResources();
+	}
+	StaticMesh->SetRenderData(MakeUnique<FStaticMeshRenderData>());
+	RenderData = StaticMesh->GetRenderData();
+#else
+	if (StaticMesh->RenderData.IsValid())
+	{
+		StaticMesh->RenderData->ReleaseResources();
+	}
+	StaticMesh->RenderData = MakeUnique<FStaticMeshRenderData>();
+	RenderData = StaticMesh->RenderData.Get();
+#endif
+
+	
+	RenderData->AllocateLODResources(JsonMeshObjects.Num());
+
+	int32 LODIndex = 0;
+
+	FBoxSphereBounds BoundingBoxAndSphere;
 
 	for (TSharedRef<FJsonObject> JsonMeshObject : JsonMeshObjects)
 	{
+		const int32 CurrentLODIndex = LODIndex++;
+		FStaticMeshLODResources& LODResources = RenderData->LODResources[CurrentLODIndex];
+
+#if ENGINE_MAJOR_VERSION > 4
+		FStaticMeshSectionArray& Sections = LODResources.Sections;
+#else
+		FStaticMeshLODResources::FStaticMeshSectionArray& Sections = LODResources.Sections;
+#endif
 
 		TArray<FglTFRuntimePrimitive> Primitives;
+		TArray<uint32> LODIndices;
+
 
 		if (PrimitivesCache.Contains(JsonMeshObject))
 		{
@@ -39,14 +78,12 @@ UStaticMesh* FglTFRuntimeParser::LoadStaticMesh_Internal(TArray<TSharedRef<FJson
 			}
 		}
 
-		UStaticMeshDescription* MeshDescription = UStaticMesh::CreateStaticMeshDescription();
-
 		TArray<FStaticMaterial> StaticMaterials;
 
 		int32 NumUVs = 1;
-		bool bCalculateNormals = false;
-		bool bCalculateTangents = false;
 		FVector PivotDelta = FVector::ZeroVector;
+
+		int32 NumVertexInstancesPerLOD = 0;
 
 		for (FglTFRuntimePrimitive& Primitive : Primitives)
 		{
@@ -55,258 +92,266 @@ UStaticMesh* FglTFRuntimeParser::LoadStaticMesh_Internal(TArray<TSharedRef<FJson
 				NumUVs = Primitive.UVs.Num();
 			}
 
-			if (Primitive.Normals.Num() == 0)
+			if (Primitive.Colors.Num() > 0)
 			{
-				bCalculateNormals = true;
+				bHasVertexColors = true;
 			}
 
-			if (Primitive.Tangents.Num() == 0)
-			{
-				bCalculateTangents = true;
-			}
+			NumVertexInstancesPerLOD += Primitive.Indices.Num();
 		}
+
+		TArray<FStaticMeshBuildVertex> StaticMeshBuildVertices;
+		StaticMeshBuildVertices.SetNum(NumVertexInstancesPerLOD);
+
+		FBox BoundingBox;
+		BoundingBox.Init();
+
+		int32 VertexInstanceBaseIndex = 0;
 
 		for (FglTFRuntimePrimitive& Primitive : Primitives)
 		{
-			FPolygonGroupID PolygonGroupID = MeshDescription->CreatePolygonGroup();
-
-			TPolygonGroupAttributesRef<FName> PolygonGroupMaterialSlotNames = MeshDescription->GetPolygonGroupMaterialSlotNames();
-			FName MaterialName = FName(FString::Printf(TEXT("LOD_%d_Section_%d"), MeshDescriptions.Num(), StaticMaterials.Num()));
-			PolygonGroupMaterialSlotNames[PolygonGroupID] = MaterialName;
+			FName MaterialName = FName(FString::Printf(TEXT("LOD_%d_Section_%d_%s"), CurrentLODIndex, StaticMaterials.Num(), *Primitive.MaterialName));
 			FStaticMaterial StaticMaterial(Primitive.Material, MaterialName);
 			StaticMaterial.UVChannelData.bInitialized = true;
-			StaticMaterials.Add(StaticMaterial);
+			int32 MaterialIndex = StaticMaterials.Add(StaticMaterial);
 
-			TVertexAttributesRef<FVector> PositionsAttributesRef = MeshDescription->GetVertexPositions();
-			TVertexInstanceAttributesRef<FVector> NormalsInstanceAttributesRef = MeshDescription->GetVertexInstanceNormals();
-			TVertexInstanceAttributesRef<FVector> TangentsInstanceAttributesRef = MeshDescription->GetVertexInstanceTangents();
-			TVertexInstanceAttributesRef<FVector2D> UVsInstanceAttributesRef = MeshDescription->GetVertexInstanceUVs();
-			TVertexInstanceAttributesRef<FVector4> ColorsInstanceAttributesRef = MeshDescription->GetVertexInstanceColors();
+			FStaticMeshSection& Section = Sections.AddDefaulted_GetRef();
+			int32 NumVertexInstancesPerSection = Primitive.Indices.Num();
 
-			UVsInstanceAttributesRef.SetNumIndices(NumUVs);
+			Section.NumTriangles = NumVertexInstancesPerSection / 3;
+			Section.FirstIndex = VertexInstanceBaseIndex;
+			Section.bEnableCollision = true;
+			Section.bCastShadow = true;
+			Section.MaterialIndex = MaterialIndex;
 
-			TArray<FVertexInstanceID> VertexInstancesIDs;
-			TArray<FVertexID> VerticesIDs;
-			TArray<FVertexID> TriangleVerticesIDs;
+			bool bMissingNormals = false;
+			bool bMissingTangents = false;
+			bool bMissingIgnore = false;
 
-
-			for (FVector& Position : Primitive.Positions)
+			for (int32 VertexInstanceSectionIndex = 0; VertexInstanceSectionIndex < NumVertexInstancesPerSection; VertexInstanceSectionIndex++)
 			{
-				FVertexID VertexID = MeshDescription->CreateVertex();
-				PositionsAttributesRef[VertexID] = Position;
-				VerticesIDs.Add(VertexID);
-			}
+				uint32 VertexIndex = Primitive.Indices[VertexInstanceSectionIndex];
+				LODIndices.Add(VertexInstanceBaseIndex + VertexInstanceSectionIndex);
 
-			for (uint32 VertexIndex : Primitive.Indices)
-			{
-				if (VertexIndex >= (uint32)VerticesIDs.Num())
-					return nullptr;
+				FStaticMeshBuildVertex& StaticMeshVertex = StaticMeshBuildVertices[VertexInstanceBaseIndex + VertexInstanceSectionIndex];
 
-				FVertexInstanceID NewVertexInstanceID = MeshDescription->CreateVertexInstance(VerticesIDs[VertexIndex]);
+				StaticMeshVertex.Position = GetSafeValue(Primitive.Positions, VertexIndex, FVector::ZeroVector, bMissingIgnore);
+				BoundingBox += StaticMeshVertex.Position;
+				StaticMeshVertex.TangentX = GetSafeValue(Primitive.Tangents, VertexIndex, FVector4(0, 0, 0, 0), bMissingTangents);
+				StaticMeshVertex.TangentZ = GetSafeValue(Primitive.Normals, VertexIndex, FVector::ZeroVector, bMissingNormals);
+				StaticMeshVertex.TangentY = ComputeTangentY(StaticMeshVertex.TangentZ, StaticMeshVertex.TangentX);
 
-				// LOD0 ?
-				if (StaticMesh->bAllowCPUAccess && MeshDescriptions.Num() == 0)
+				for (int32 UVIndex = 0; UVIndex < NumUVs; UVIndex++)
 				{
-					LOD0CPUVertexInstancesIDs.Add(NewVertexInstanceID.GetValue());
+					if (UVIndex < Primitive.UVs.Num())
+					{
+						StaticMeshVertex.UVs[UVIndex] = GetSafeValue(Primitive.UVs[UVIndex], VertexIndex, FVector2D::ZeroVector, bMissingIgnore);
+					}
 				}
 
-				if (Primitive.Normals.Num() > 0)
+				if (bHasVertexColors)
 				{
-					if (VertexIndex >= (uint32)Primitive.Normals.Num())
+					if (VertexIndex < static_cast<uint32>(Primitive.Colors.Num()))
 					{
-						NormalsInstanceAttributesRef[NewVertexInstanceID] = FVector::ZeroVector;
+						StaticMeshVertex.Color = FLinearColor(Primitive.Colors[VertexIndex]).ToFColor(true);
 					}
 					else
 					{
-						NormalsInstanceAttributesRef[NewVertexInstanceID] = Primitive.Normals[VertexIndex];
+						StaticMeshVertex.Color = FColor::White;
 					}
-				}
-
-				if (Primitive.Tangents.Num() > 0)
-				{
-					if (VertexIndex >= (uint32)Primitive.Tangents.Num())
-					{
-						TangentsInstanceAttributesRef[NewVertexInstanceID] = FVector::ZeroVector;
-					}
-					else
-					{
-						TangentsInstanceAttributesRef[NewVertexInstanceID] = Primitive.Tangents[VertexIndex];
-					}
-				}
-
-				if (Primitive.Colors.Num() > 0)
-				{
-					if (VertexIndex >= (uint32)Primitive.Colors.Num())
-					{
-						ColorsInstanceAttributesRef[NewVertexInstanceID] = FVector4(0, 0, 0, 0);
-					}
-					else
-					{
-						ColorsInstanceAttributesRef[NewVertexInstanceID] = Primitive.Colors[VertexIndex];
-					}
-					bHasVertexColors = true;
-				}
-
-				for (int32 UVIndex = 0; UVIndex < Primitive.UVs.Num(); UVIndex++)
-				{
-					if (VertexIndex >= (uint32)Primitive.UVs[UVIndex].Num())
-					{
-						UVsInstanceAttributesRef.Set(NewVertexInstanceID, UVIndex, FVector2D::ZeroVector);
-					}
-					else
-					{
-						UVsInstanceAttributesRef.Set(NewVertexInstanceID, UVIndex, Primitive.UVs[UVIndex][VertexIndex]);
-					}
-				}
-
-				VertexInstancesIDs.Add(NewVertexInstanceID);
-				TriangleVerticesIDs.Add(VerticesIDs[VertexIndex]);
-
-				if (VertexInstancesIDs.Num() == 3)
-				{
-					// degenerate ?
-					if (TriangleVerticesIDs[0] == TriangleVerticesIDs[1] ||
-						TriangleVerticesIDs[1] == TriangleVerticesIDs[2] ||
-						TriangleVerticesIDs[0] == TriangleVerticesIDs[2])
-					{
-						VertexInstancesIDs.Reset();
-						TriangleVerticesIDs.Reset();
-						continue;
-					}
-
-					TArray<FEdgeID> Edges;
-					// fix winding ?
-					if (StaticMeshConfig.bReverseWinding)
-					{
-						VertexInstancesIDs.Swap(1, 2);
-					}
-					FTriangleID TriangleID = MeshDescription->CreateTriangle(PolygonGroupID, VertexInstancesIDs, Edges);
-					if (TriangleID == FTriangleID::Invalid)
-					{
-						return nullptr;
-					}
-					VertexInstancesIDs.Reset();
-					TriangleVerticesIDs.Reset();
 				}
 			}
 
+			const bool bCanGenerateNormals = (bMissingNormals && StaticMeshConfig.NormalsGenerationStrategy == EglTFRuntimeNormalsGenerationStrategy::IfMissing) ||
+				StaticMeshConfig.NormalsGenerationStrategy == EglTFRuntimeNormalsGenerationStrategy::Always;
+			if (bCanGenerateNormals && (NumVertexInstancesPerSection % 3) == 0)
+			{
+				for (int32 VertexInstanceSectionIndex = 0; VertexInstanceSectionIndex < NumVertexInstancesPerSection; VertexInstanceSectionIndex += 3)
+				{
+					FStaticMeshBuildVertex& StaticMeshVertex0 = StaticMeshBuildVertices[VertexInstanceBaseIndex + VertexInstanceSectionIndex];
+					FStaticMeshBuildVertex& StaticMeshVertex1 = StaticMeshBuildVertices[VertexInstanceBaseIndex + VertexInstanceSectionIndex + 1];
+					FStaticMeshBuildVertex& StaticMeshVertex2 = StaticMeshBuildVertices[VertexInstanceBaseIndex + VertexInstanceSectionIndex + 2];
+
+					FVector SideA = StaticMeshVertex1.Position - StaticMeshVertex0.Position;
+					FVector SideB = StaticMeshVertex2.Position - StaticMeshVertex0.Position;
+
+					FVector NormalFromCross = FVector::CrossProduct(SideB, SideA).GetSafeNormal();
+
+					StaticMeshVertex0.TangentZ = NormalFromCross;
+					StaticMeshVertex1.TangentZ = NormalFromCross;
+					StaticMeshVertex2.TangentZ = NormalFromCross;
+				}
+				bMissingNormals = false;
+			}
+
+			// recompute tangents if required (need normals and uvs)
+			if (bMissingTangents && !bMissingNormals && Primitive.UVs.Num() > 0 && (NumVertexInstancesPerSection % 3) == 0)
+			{
+				for (int32 VertexInstanceSectionIndex = 0; VertexInstanceSectionIndex < NumVertexInstancesPerSection; VertexInstanceSectionIndex += 3)
+				{
+					FStaticMeshBuildVertex& StaticMeshVertex0 = StaticMeshBuildVertices[VertexInstanceBaseIndex + VertexInstanceSectionIndex];
+					FStaticMeshBuildVertex& StaticMeshVertex1 = StaticMeshBuildVertices[VertexInstanceBaseIndex + VertexInstanceSectionIndex + 1];
+					FStaticMeshBuildVertex& StaticMeshVertex2 = StaticMeshBuildVertices[VertexInstanceBaseIndex + VertexInstanceSectionIndex + 2];
+
+					FVector Position0 = StaticMeshVertex0.Position;
+					FVector4 TangentZ0 = StaticMeshVertex0.TangentZ;
+					FVector2D UV0 = StaticMeshVertex0.UVs[0];
+
+					FVector Position1 = StaticMeshVertex1.Position;
+					FVector4 TangentZ1 = StaticMeshVertex1.TangentZ;
+					FVector2D UV1 = StaticMeshVertex1.UVs[0];
+
+					FVector Position2 = StaticMeshVertex2.Position;
+					FVector4 TangentZ2 = StaticMeshVertex2.TangentZ;
+					FVector2D UV2 = StaticMeshVertex2.UVs[0];
+
+					FVector DeltaPosition0 = Position1 - Position0;
+					FVector DeltaPosition1 = Position2 - Position0;
+
+					FVector2D DeltaUV0 = UV1 - UV0;
+					FVector2D DeltaUV1 = UV2 - UV0;
+
+					float Factor = 1.0f / (DeltaUV0.X * DeltaUV1.Y - DeltaUV0.Y * DeltaUV1.X);
+
+					FVector TriangleTangentX = ((DeltaPosition0 * DeltaUV1.Y) - (DeltaPosition1 * DeltaUV0.Y)) * Factor;
+					FVector TriangleTangentY = ((DeltaPosition0 * DeltaUV1.X) - (DeltaPosition1 * DeltaUV0.X)) * Factor;
+
+					FVector TangentX0 = TriangleTangentX - (TangentZ0 * FVector::DotProduct(TangentZ0, TriangleTangentX));
+					FVector CrossX0 = FVector::CrossProduct(TangentZ0, TangentX0);
+					TangentX0 *= (FVector::DotProduct(CrossX0, TriangleTangentY) < 0) ? -1.0f : 1.0f;
+					TangentX0.Normalize();
+
+					FVector TangentX1 = TriangleTangentX - (TangentZ1 * FVector::DotProduct(TangentZ1, TriangleTangentX));
+					FVector CrossX1 = FVector::CrossProduct(TangentZ1, TangentX1);
+					TangentX1 *= (FVector::DotProduct(CrossX1, TriangleTangentY) < 0) ? -1.0f : 1.0f;
+					TangentX1.Normalize();
+
+					FVector TangentX2 = TriangleTangentX - (TangentZ2 * FVector::DotProduct(TangentZ2, TriangleTangentX));
+					FVector CrossX2 = FVector::CrossProduct(TangentZ2, TangentX2);
+					TangentX2 *= (FVector::DotProduct(CrossX2, TriangleTangentY) < 0) ? -1.0f : 1.0f;
+					TangentX2.Normalize();
+
+					StaticMeshVertex0.TangentX = TangentX0;
+					StaticMeshVertex0.TangentY = ComputeTangentY(StaticMeshVertex0.TangentZ, StaticMeshVertex0.TangentX);
+
+					StaticMeshVertex1.TangentX = TangentX1;
+					StaticMeshVertex1.TangentY = ComputeTangentY(StaticMeshVertex1.TangentZ, StaticMeshVertex1.TangentX);
+
+					StaticMeshVertex2.TangentX = TangentX2;
+					StaticMeshVertex2.TangentY = ComputeTangentY(StaticMeshVertex2.TangentZ, StaticMeshVertex2.TangentX);
+
+				}
+			}
+
+			VertexInstanceBaseIndex += NumVertexInstancesPerSection;
 		}
 
-
+		// check for pivot repositioning
 		if (StaticMeshConfig.PivotPosition != EglTFRuntimePivotPosition::Asset)
 		{
-			FBoxSphereBounds MeshBounds = MeshDescription->GetMeshDescription().GetBounds();
-			TVertexAttributesRef<FVector> VertexPositions = MeshDescription->GetVertexPositions();
-
 			if (StaticMeshConfig.PivotPosition == EglTFRuntimePivotPosition::Center)
 			{
-				PivotDelta = MeshBounds.GetSphere().Center;
+				PivotDelta = BoundingBox.GetCenter();
 			}
 			else if (StaticMeshConfig.PivotPosition == EglTFRuntimePivotPosition::Top)
 			{
-				PivotDelta = MeshBounds.GetBox().GetCenter() + FVector(0, 0, MeshBounds.GetBox().GetExtent().Z);
+				PivotDelta = BoundingBox.GetCenter() + FVector(0, 0, BoundingBox.GetExtent().Z);
 			}
 			else if (StaticMeshConfig.PivotPosition == EglTFRuntimePivotPosition::Bottom)
 			{
-				PivotDelta = MeshBounds.GetBox().GetCenter() - FVector(0, 0, MeshBounds.GetBox().GetExtent().Z);
+				PivotDelta = BoundingBox.GetCenter() - FVector(0, 0, BoundingBox.GetExtent().Z);
 			}
 
-			for (const FVertexID VertexID : MeshDescription->Vertices().GetElementIDs())
+			for (FStaticMeshBuildVertex& StaticMeshVertex : StaticMeshBuildVertices)
 			{
-				VertexPositions[VertexID] -= PivotDelta;
+				StaticMeshVertex.Position -= PivotDelta;
 			}
 
-			if (MeshDescriptions.Num() == 0)
+			if (CurrentLODIndex == 0)
 			{
 				LOD0PivotDelta = PivotDelta;
 			}
 		}
 
+		if (CurrentLODIndex == 0)
+		{
+			BoundingBox.GetCenterAndExtents(BoundingBoxAndSphere.Origin, BoundingBoxAndSphere.BoxExtent);
+			BoundingBoxAndSphere.SphereRadius = 0.0f;
+			for (const FStaticMeshBuildVertex& StaticMeshVertex : StaticMeshBuildVertices)
+			{
+				BoundingBoxAndSphere.SphereRadius = FMath::Max((StaticMeshVertex.Position - BoundingBoxAndSphere.Origin).Size(), BoundingBoxAndSphere.SphereRadius);
+			}
+		}
+
+		LODResources.VertexBuffers.PositionVertexBuffer.Init(StaticMeshBuildVertices, StaticMesh->bAllowCPUAccess);
+		LODResources.VertexBuffers.StaticMeshVertexBuffer.Init(StaticMeshBuildVertices, NumUVs, StaticMesh->bAllowCPUAccess);
+		if (bHasVertexColors)
+		{
+			LODResources.VertexBuffers.ColorVertexBuffer.Init(StaticMeshBuildVertices, StaticMesh->bAllowCPUAccess);
+		}
+		LODResources.bHasColorVertexData = bHasVertexColors;
+		LODResources.IndexBuffer.SetIndices(LODIndices, EIndexBufferStride::Force32Bit);
+
+
+#if ENGINE_MAJOR_VERSION > 4 || (ENGINE_MINOR_VERSION > 26)
+		TArray<FStaticMaterial> CurrentStaticMaterials = StaticMesh->GetStaticMaterials();
+		CurrentStaticMaterials.Append(StaticMaterials);
+		StaticMesh->SetStaticMaterials(CurrentStaticMaterials);
+#else
 		StaticMesh->StaticMaterials.Append(StaticMaterials);
-
-		
-		if (bCalculateNormals || bCalculateTangents)
-		{
-			FStaticMeshOperations::ComputePolygonTangentsAndNormals(MeshDescription->GetMeshDescription());
-			EComputeNTBsFlags NTPBsFlags = EComputeNTBsFlags::None;
-			if (bCalculateNormals)
-			{
-				NTPBsFlags |= EComputeNTBsFlags::Normals;
-			}
-			if (bCalculateTangents)
-			{
-				NTPBsFlags |= EComputeNTBsFlags::Tangents;
-			}
-			FStaticMeshOperations::ComputeTangentsAndNormals(MeshDescription->GetMeshDescription(), NTPBsFlags);
-		}
-
-		MeshDescriptions.Add(MeshDescription);
-	}
-
-	StaticMesh->BuildFromStaticMeshDescriptions(MeshDescriptions, false);
-
-	bool bIsMobile = GMaxRHIFeatureLevel == ERHIFeatureLevel::ES3_1;
-#if WITH_EDITOR
-	UEditorEngine* Editor = (UEditorEngine*)GEngine;
-	bIsMobile |= Editor->GetActiveFeatureLevelPreviewType() == ERHIFeatureLevel::ES3_1;
 #endif
-
-	if ((bHasVertexColors || bIsMobile) && StaticMesh->RenderData && StaticMesh->RenderData->LODResources.Num() > 0)
-	{
-		StaticMesh->ReleaseResources();
-		for (int32 LODIndex = 0; LODIndex < StaticMesh->RenderData->LODResources.Num(); LODIndex++)
-		{
-			StaticMesh->RenderData->LODResources[LODIndex].bHasColorVertexData = true;
-		}
-		StaticMesh->InitResources();
 	}
+
+	
+#if ENGINE_MAJOR_VERSION > 4 || (ENGINE_MINOR_VERSION > 26)
+	UBodySetup* BodySetup = StaticMesh->GetBodySetup();
+#else
+	UBodySetup* BodySetup = StaticMesh->BodySetup;
+#endif
 
 	// Override LODs ScreenSize
 	for (const TPair<int32, float>& Pair : StaticMeshConfig.LODScreenSize)
 	{
 		int32 CurrentLODIndex = Pair.Key;
-		if (StaticMesh->RenderData && CurrentLODIndex >= 0 && CurrentLODIndex < StaticMesh->RenderData->LODResources.Num())
+		if (RenderData && CurrentLODIndex >= 0 && CurrentLODIndex < RenderData->LODResources.Num())
 		{
-			StaticMesh->RenderData->ScreenSize[CurrentLODIndex].Default = Pair.Value;
+			RenderData->ScreenSize[CurrentLODIndex].Default = Pair.Value;
 		}
 	}
 
-	if (!StaticMesh->BodySetup)
+	StaticMesh->InitResources();
+
+	RenderData->Bounds = BoundingBoxAndSphere;
+	StaticMesh->CalculateExtendedBounds();
+
+	if (!BodySetup)
 	{
 		StaticMesh->CreateBodySetup();
+#if ENGINE_MAJOR_VERSION > 4 || (ENGINE_MINOR_VERSION > 26)
+		BodySetup = StaticMesh->GetBodySetup();
+#else
+		BodySetup = StaticMesh->BodySetup;
+#endif
 	}
 
-	StaticMesh->BodySetup->bMeshCollideAll = false;
-	StaticMesh->BodySetup->CollisionTraceFlag = StaticMeshConfig.CollisionComplexity;
-
-	StaticMesh->BodySetup->InvalidatePhysicsData();
-
-	// required for building complex collisions
-#if !WITH_EDITOR
-	if (!bIsMobile && StaticMesh->bAllowCPUAccess && StaticMesh->RenderData && StaticMesh->RenderData->LODResources.Num() > 0)
+	if (!StaticMesh->bAllowCPUAccess)
 	{
-		FStaticMeshLODResources& LOD = StaticMesh->RenderData->LODResources[0];
-		ENQUEUE_RENDER_COMMAND(FixIndexBufferOnCPUCommand)(
-			[&LOD, &LOD0CPUVertexInstancesIDs](FRHICommandListImmediate& RHICmdList)
-		{
-			LOD.IndexBuffer.ReleaseResource();
-			LOD.IndexBuffer = FRawStaticIndexBuffer(true);
-			LOD.IndexBuffer.SetIndices(LOD0CPUVertexInstancesIDs, EIndexBufferStride::AutoDetect);
-			LOD.IndexBuffer.InitResource();
-		});
+		BodySetup->bNeverNeedsCookedCollisionData = true;
+	}
 
-		FlushRenderingCommands();
-}
-#endif
+	BodySetup->bMeshCollideAll = false;
+	BodySetup->CollisionTraceFlag = StaticMeshConfig.CollisionComplexity;
+
+	BodySetup->InvalidatePhysicsData();
 
 	if (StaticMeshConfig.bBuildSimpleCollision)
 	{
 		FKBoxElem BoxElem;
-		BoxElem.Center = StaticMesh->RenderData->Bounds.Origin;
-		BoxElem.X = StaticMesh->RenderData->Bounds.BoxExtent.X * 2.0f;
-		BoxElem.Y = StaticMesh->RenderData->Bounds.BoxExtent.Y * 2.0f;
-		BoxElem.Z = StaticMesh->RenderData->Bounds.BoxExtent.Z * 2.0f;
-		StaticMesh->BodySetup->AggGeom.BoxElems.Add(BoxElem);
+		BoxElem.Center = RenderData->Bounds.Origin;
+		BoxElem.X = RenderData->Bounds.BoxExtent.X * 2.0f;
+		BoxElem.Y = RenderData->Bounds.BoxExtent.Y * 2.0f;
+		BoxElem.Z = RenderData->Bounds.BoxExtent.Z * 2.0f;
+		BodySetup->AggGeom.BoxElems.Add(BoxElem);
 	}
 
 	for (const FBox& Box : StaticMeshConfig.BoxCollisions)
@@ -317,7 +362,7 @@ UStaticMesh* FglTFRuntimeParser::LoadStaticMesh_Internal(TArray<TSharedRef<FJson
 		BoxElem.X = BoxSize.X;
 		BoxElem.Y = BoxSize.Y;
 		BoxElem.Z = BoxSize.Z;
-		StaticMesh->BodySetup->AggGeom.BoxElems.Add(BoxElem);
+		BodySetup->AggGeom.BoxElems.Add(BoxElem);
 	}
 
 	for (const FVector4 Sphere : StaticMeshConfig.SphereCollisions)
@@ -325,10 +370,10 @@ UStaticMesh* FglTFRuntimeParser::LoadStaticMesh_Internal(TArray<TSharedRef<FJson
 		FKSphereElem SphereElem;
 		SphereElem.Center = Sphere;
 		SphereElem.Radius = Sphere.W;
-		StaticMesh->BodySetup->AggGeom.SphereElems.Add(SphereElem);
+		BodySetup->AggGeom.SphereElems.Add(SphereElem);
 	}
 
-	StaticMesh->BodySetup->CreatePhysicsMeshes();
+	BodySetup->CreatePhysicsMeshes();
 
 	for (const TPair<FString, FTransform>& Pair : StaticMeshConfig.Sockets)
 	{

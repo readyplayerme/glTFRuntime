@@ -35,6 +35,14 @@ enum class EglTFRuntimeTransformBaseType : uint8
 	Identity,
 };
 
+UENUM()
+enum class EglTFRuntimeNormalsGenerationStrategy : uint8
+{
+	IfMissing,
+	Never,
+	Always
+};
+
 USTRUCT(BlueprintType)
 struct FglTFRuntimeBasisMatrix
 {
@@ -294,6 +302,9 @@ struct FglTFRuntimeMaterialsConfig
 	TMap<int32, UMaterialInterface*> MaterialsOverrideMap;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	TMap<FString, UMaterialInterface*> MaterialsOverrideByNameMap;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
 	TMap<int32, UTexture2D*> TexturesOverrideMap;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
@@ -311,6 +322,9 @@ struct FglTFRuntimeMaterialsConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
 	float SpecularFactor;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	bool bMaterialsOverrideMapInjectParams;
+
 	FglTFRuntimeMaterialsConfig()
 	{
 		CacheMode = EglTFRuntimeCacheMode::ReadWrite;
@@ -318,6 +332,7 @@ struct FglTFRuntimeMaterialsConfig
 		bMergeSectionsByMaterial = false;
 		SpecularFactor = 0;
 		bDisableVertexColors = false;
+		bMaterialsOverrideMapInjectParams = false;
 	}
 };
 
@@ -365,6 +380,9 @@ struct FglTFRuntimeStaticMeshConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
 	TMap<int32, float> LODScreenSize;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	EglTFRuntimeNormalsGenerationStrategy NormalsGenerationStrategy;
+
 	FglTFRuntimeStaticMeshConfig()
 	{
 		CacheMode = EglTFRuntimeCacheMode::ReadWrite;
@@ -372,8 +390,9 @@ struct FglTFRuntimeStaticMeshConfig
 		bBuildSimpleCollision = false;
 		Outer = nullptr;
 		CollisionComplexity = ECollisionTraceFlag::CTF_UseDefault;
-		bAllowCPUAccess = true;
+		bAllowCPUAccess = false;
 		PivotPosition = EglTFRuntimePivotPosition::Asset;
+		NormalsGenerationStrategy = EglTFRuntimeNormalsGenerationStrategy::IfMissing;
 	}
 };
 
@@ -479,6 +498,8 @@ struct FglTFRuntimeCapsule
 	{
 		Radius = 0;
 		Length = 0;
+		Center = FVector::ZeroVector;
+		Rotation = FRotator::ZeroRotator;
 	}
 };
 
@@ -665,6 +686,7 @@ struct FglTFRuntimePrimitive
 	TArray<FglTFRuntimeMorphTarget> MorphTargets;
 	TMap<int32, FName> OverrideBoneMap;
 	TMap<int32, int32> BonesCache;
+	FString MaterialName;
 };
 
 USTRUCT(BlueprintType)
@@ -897,6 +919,12 @@ struct FglTFRuntimeAudioEmitter
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
 	USoundWave* Sound;
+
+	FglTFRuntimeAudioEmitter()
+	{
+		Sound = nullptr;
+		Volume = 1.0f;
+	}
 };
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FglTFRuntimeSkeletalMeshAsync, USkeletalMesh*, SkeletalMesh);
@@ -928,7 +956,7 @@ public:
 
 	UStaticMesh* LoadStaticMeshByName(const FString MeshName, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
 
-	UMaterialInterface* LoadMaterial(const int32 MaterialIndex, const FglTFRuntimeMaterialsConfig& MaterialsConfig, const bool bUseVertexColors);
+	UMaterialInterface* LoadMaterial(const int32 MaterialIndex, const FglTFRuntimeMaterialsConfig& MaterialsConfig, const bool bUseVertexColors, FString& MaterialName);
 	UTexture2D* LoadTexture(const int32 TextureIndex, TArray<FglTFRuntimeMipMap>& Mips, const bool sRGB, const FglTFRuntimeMaterialsConfig& MaterialsConfig);
 
 	bool LoadNodes();
@@ -1016,16 +1044,18 @@ protected:
 
 	TMap<int32, TArray64<uint8>> BuffersCache;
 
+	TMap<UMaterialInterface*, FString> MaterialsNameCache;
+
 	TArray<FglTFRuntimeNode> AllNodesCache;
 	bool bAllNodesCached;
 
 	TArray64<uint8> BinaryBuffer;
 
 	UStaticMesh* LoadStaticMesh_Internal(TArray<TSharedRef<FJsonObject>> JsonMeshObjects, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig, const TMap<TSharedRef<FJsonObject>, TArray<FglTFRuntimePrimitive>>& PrimitivesCache);
-	UMaterialInterface* LoadMaterial_Internal(TSharedRef<FJsonObject> JsonMaterialObject, const FglTFRuntimeMaterialsConfig& MaterialsConfig, const bool bUseVertexColors);
+	UMaterialInterface* LoadMaterial_Internal(const int32 Index, const FString& MaterialName, TSharedRef<FJsonObject> JsonMaterialObject, const FglTFRuntimeMaterialsConfig& MaterialsConfig, const bool bUseVertexColors);
 	bool LoadNode_Internal(int32 Index, TSharedRef<FJsonObject> JsonNodeObject, int32 NodesCount, FglTFRuntimeNode& Node);
 
-	UMaterialInterface* BuildMaterial(const FglTFRuntimeMaterial& RuntimeMaterial, const FglTFRuntimeMaterialsConfig& MaterialsConfig, const bool bUseVertexColors);
+	UMaterialInterface* BuildMaterial(const int32 Index, const FString& MaterialName, const FglTFRuntimeMaterial& RuntimeMaterial, const FglTFRuntimeMaterialsConfig& MaterialsConfig, const bool bUseVertexColors);
 	UTexture2D* BuildTexture(UObject* Outer, const TArray<FglTFRuntimeMipMap>& Mips, const TEnumAsByte<TextureCompressionSettings> Compression, const bool sRGB, const FglTFRuntimeMaterialsConfig& MaterialsConfig);
 
 	bool LoadSkeletalAnimation_Internal(TSharedRef<FJsonObject> JsonAnimationObject, TMap<FString, FRawAnimSequenceTrack>& Tracks, TMap<FName, TArray<TPair<float, float>>>& MorphTargetCurves, float& Duration, const FglTFRuntimeSkeletalAnimationConfig& SkeletalAnimationConfig, TFunctionRef<bool(const FglTFRuntimeNode& Node)> Filter);
@@ -1212,7 +1242,6 @@ protected:
 			{
 				uint8* Ptr = (uint8*)&(Bytes[Index]);
 				Value = bNormalized ? ((float)(*Ptr)) / 255.f : *Ptr;
-
 			}
 			// SHORT
 			else if (ComponentType == 5122)
@@ -1267,4 +1296,17 @@ protected:
 	bool MergePrimitives(TArray<FglTFRuntimePrimitive> SourcePrimitives, FglTFRuntimePrimitive& OutPrimitive);
 
 	TSharedPtr<FglTFRuntimeZipFile> ZipFile;
+
+	template<typename T>
+	T GetSafeValue(TArray<T>& Values, const int32 Index, const T DefaultValue, bool& bMissing)
+	{
+		if (Index >= Values.Num())
+		{
+			bMissing = true;
+			return DefaultValue;
+		}
+		return Values[Index];
+	}
+
+	FVector ComputeTangentY(FVector Normal, FVector TangetX);
 };

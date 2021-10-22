@@ -497,19 +497,19 @@ TSharedPtr<FJsonObject> FglTFRuntimeParser::GetJsonObjectFromExtensionIndex(TSha
 {
 	if (Index < 0)
 	{
-		return false;
+		return nullptr;
 	}
 
 	const TSharedPtr<FJsonObject>* JsonExtensionsObject;
 	if (!JsonObject->TryGetObjectField("extensions", JsonExtensionsObject))
 	{
-		return false;
+		return nullptr;
 	}
 
 	const TSharedPtr<FJsonObject>* JsonExtensionObject = nullptr;
 	if (!(*JsonExtensionsObject)->TryGetObjectField(ExtensionName, JsonExtensionObject))
 	{
-		return false;
+		return nullptr;
 	}
 
 	return GetJsonObjectFromIndex(JsonExtensionObject->ToSharedRef(), FieldName, Index);
@@ -1288,7 +1288,13 @@ USkeleton* FglTFRuntimeParser::LoadSkeleton(const int32 SkinIndex, const FglTFRu
 	USkeletalMesh* SkeletalMesh = NewObject<USkeletalMesh>(GetTransientPackage(), NAME_None, RF_Public);
 	USkeleton* Skeleton = NewObject<USkeleton>(GetTransientPackage(), NAME_None, RF_Public);
 
-	if (!FillReferenceSkeleton(JsonSkinObject.ToSharedRef(), SkeletalMesh->RefSkeleton, BoneMap, SkeletonConfig))
+#if ENGINE_MAJOR_VERSION > 4 || ENGINE_MINOR_VERSION > 26
+	FReferenceSkeleton& RefSkeleton = SkeletalMesh->GetRefSkeleton();
+#else
+	FReferenceSkeleton& RefSkeleton = SkeletalMesh->RefSkeleton;
+#endif
+
+	if (!FillReferenceSkeleton(JsonSkinObject.ToSharedRef(), RefSkeleton, BoneMap, SkeletonConfig))
 	{
 		AddError("FillReferenceSkeleton()", "Unable to fill RefSkeleton.");
 		return nullptr;
@@ -1296,17 +1302,17 @@ USkeleton* FglTFRuntimeParser::LoadSkeleton(const int32 SkinIndex, const FglTFRu
 
 	if (SkeletonConfig.bNormalizeSkeletonScale)
 	{
-		NormalizeSkeletonScale(SkeletalMesh->RefSkeleton);
+		NormalizeSkeletonScale(RefSkeleton);
 	}
 
 	if (SkeletonConfig.bClearRotations || SkeletonConfig.CopyRotationsFrom)
 	{
-		ClearSkeletonRotations(SkeletalMesh->RefSkeleton);
+		ClearSkeletonRotations(RefSkeleton);
 	}
 
 	if (SkeletonConfig.CopyRotationsFrom)
 	{
-		CopySkeletonRotationsFrom(SkeletalMesh->RefSkeleton, SkeletonConfig.CopyRotationsFrom->GetReferenceSkeleton());
+		CopySkeletonRotationsFrom(RefSkeleton, SkeletonConfig.CopyRotationsFrom->GetReferenceSkeleton());
 	}
 
 	Skeleton->MergeAllBonesToBoneTree(SkeletalMesh);
@@ -1964,7 +1970,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	int64 MaterialIndex;
 	if (JsonPrimitiveObject->TryGetNumberField("material", MaterialIndex))
 	{
-		Primitive.Material = LoadMaterial(MaterialIndex, MaterialsConfig, Primitive.Colors.Num() > 0);
+		Primitive.Material = LoadMaterial(MaterialIndex, MaterialsConfig, Primitive.Colors.Num() > 0, Primitive.MaterialName);
 		if (!Primitive.Material)
 		{
 			AddError("LoadMaterial()", FString::Printf(TEXT("Unable to load material %lld"), MaterialIndex));
@@ -2834,4 +2840,13 @@ bool FglTFRuntimeParser::GetJsonObjectBytes(TSharedRef<FJsonObject> JsonObject, 
 	}
 
 	return Bytes.Num() > 0;
+}
+
+FVector FglTFRuntimeParser::ComputeTangentY(FVector Normal, FVector TangetX)
+{
+	float Determinant = GetBasisDeterminantSign(Normal.GetSafeNormal(),
+		(Normal ^ TangetX).GetSafeNormal(),
+		Normal.GetSafeNormal());
+
+	return (Normal ^ TangetX) * Determinant;
 }
