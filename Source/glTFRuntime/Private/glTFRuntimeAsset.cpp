@@ -505,3 +505,55 @@ bool UglTFRuntimeAsset::LoadEmitterIntoAudioComponent(const FglTFRuntimeAudioEmi
 	GLTF_CHECK_PARSER(false);
 	return Parser->LoadEmitterIntoAudioComponent(Emitter, AudioComponent);
 }
+
+void UglTFRuntimeAsset::LoadStaticMeshAsync(const int32 MeshIndex, FglTFRuntimeStaticMeshAsync AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig)
+{
+	GLTF_CHECK_PARSER_VOID();
+
+	Parser->LoadStaticMeshAsync(MeshIndex, AsyncCallback, StaticMeshConfig);
+}
+
+void UglTFRuntimeAsset::LoadStaticMeshLODsAsync(const TArray<int32> MeshIndices, FglTFRuntimeStaticMeshAsync AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig)
+{
+	GLTF_CHECK_PARSER_VOID();
+
+	Parser->LoadStaticMeshLODsAsync(MeshIndices, AsyncCallback, StaticMeshConfig);
+}
+
+int32 UglTFRuntimeAsset::GetNumMeshes() const
+{
+	GLTF_CHECK_PARSER(0);
+
+	return Parser->GetNumMeshes();
+}
+
+int32 UglTFRuntimeAsset::GetNumImages() const
+{
+	GLTF_CHECK_PARSER(0);
+
+	return Parser->GetNumImages();
+}
+
+UTexture2D* UglTFRuntimeAsset::LoadImage(const int32 ImageIndex, const TEnumAsByte<TextureCompressionSettings> Compression, const bool bSRGB)
+{
+	GLTF_CHECK_PARSER(nullptr);
+	TArray64<uint8> UncompressedBytes;
+	int32 Width = 0;
+	int32 Height = 0;
+	if (!Parser->LoadImage(ImageIndex, UncompressedBytes, Width, Height))
+	{
+		return nullptr;
+	}
+
+	if (Width > 0 && Height > 0)
+	{
+		FglTFRuntimeMipMap Mip(-1);
+		Mip.Pixels = UncompressedBytes;
+		Mip.Width = Width;
+		Mip.Height = Height;
+		TArray<FglTFRuntimeMipMap> Mips = { Mip };
+		return Parser->BuildTexture(this, Mips, Compression, bSRGB);
+	}
+
+	return nullptr;
+}

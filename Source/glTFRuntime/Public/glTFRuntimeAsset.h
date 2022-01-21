@@ -94,6 +94,12 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
 	TArray<int32> GetCameraNodesIndices();
 
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	int32 GetNumMeshes() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	int32 GetNumImages() const;
+
 	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
 	bool LoadCamera(const int32 CameraIndex, UCameraComponent* CameraComponent);
 
@@ -159,6 +165,15 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
 	bool LoadEmitterIntoAudioComponent(const FglTFRuntimeAudioEmitter& Emitter, UAudioComponent* AudioComponent);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "StaticMeshConfig", AutoCreateRefTerm = "StaticMeshConfig"), Category = "glTFRuntime")
+	void LoadStaticMeshAsync(const int32 MeshIndex, FglTFRuntimeStaticMeshAsync AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "StaticMeshConfig", AutoCreateRefTerm = "StaticMeshConfig"), Category = "glTFRuntime")
+	void LoadStaticMeshLODsAsync(const TArray<int32> MeshIndices, FglTFRuntimeStaticMeshAsync AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
+
+	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
+	UTexture2D* LoadImage(const int32 ImageIndex, const TEnumAsByte<TextureCompressionSettings> Compression, const bool bSRGB);
 
 protected:
 	TSharedPtr<FglTFRuntimeParser> Parser;
