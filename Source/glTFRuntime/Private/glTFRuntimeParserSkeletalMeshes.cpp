@@ -392,7 +392,6 @@ USkeletalMesh* FglTFRuntimeParser::CreateSkeletalMeshFromLODs(TSharedRef<FglTFRu
 
 		int32 MorphTargetIndex = 0;
 		int32 PointsBase = 0;
-		bool hasLoadedFaceMorphs = false;
 		for (FglTFRuntimePrimitive& Primitive : LOD.Primitives)
 		{
 			for (FglTFRuntimeMorphTarget& MorphTarget : Primitive.MorphTargets)
@@ -419,17 +418,13 @@ USkeletalMesh* FglTFRuntimeParser::CreateSkeletalMeshFromLODs(TSharedRef<FglTFRu
 				}
 				MorphTargetIndex++;
 
-				if (hasLoadedFaceMorphs)
+				while (MorphTargetNames.Contains(MorphTargetName))
 				{
-					MorphTargetName = "Teeth_" + MorphTargetName;
+					MorphTargetName = MorphTarget.Name + FString::Printf(TEXT("_%d"), duplicateIndex);
+					duplicateIndex++;
 				}
 
 				MorphTargetNames.Add(MorphTargetName);
-			}
-
-			if (Primitive.MorphTargets.Num() > 0)
-			{
-				hasLoadedFaceMorphs = true;
 			}
 
 			PointsBase += Primitive.Positions.Num();
