@@ -418,6 +418,7 @@ USkeletalMesh* FglTFRuntimeParser::CreateSkeletalMeshFromLODs(TSharedRef<FglTFRu
 				}
 				MorphTargetIndex++;
 
+				int32 duplicateIndex = 1;
 				while (MorphTargetNames.Contains(MorphTargetName))
 				{
 					MorphTargetName = MorphTarget.Name + FString::Printf(TEXT("_%d"), duplicateIndex);
