@@ -396,6 +396,16 @@ USkeletalMesh* FglTFRuntimeParser::CreateSkeletalMeshFromLODs(TSharedRef<FglTFRu
 		{
 			for (FglTFRuntimeMorphTarget& MorphTarget : Primitive.MorphTargets)
 			{
+				// empty blendshape fix
+				if(!MorphTarget.Positions.ContainsByPredicate(
+					[](const FVector& position)
+					{
+						return position != FVector:: ZeroVector;
+					}))
+				{
+					continue;
+				}
+				
 				TSet<uint32> MorphTargetPoints;
 				TArray<FVector> MorphTargetPositions;
 				for (uint32 PointIndex = 0; PointIndex < (uint32)Primitive.Positions.Num(); PointIndex++)
@@ -418,13 +428,15 @@ USkeletalMesh* FglTFRuntimeParser::CreateSkeletalMeshFromLODs(TSharedRef<FglTFRu
 				}
 				MorphTargetIndex++;
 
+				// Duplicate blendshape fix start
 				int32 duplicateIndex = 1;
 				while (MorphTargetNames.Contains(MorphTargetName))
 				{
 					MorphTargetName = MorphTarget.Name + FString::Printf(TEXT("_%d"), duplicateIndex);
 					duplicateIndex++;
 				}
-
+				// Duplicate blendshape fix end
+				
 				MorphTargetNames.Add(MorphTargetName);
 			}
 
