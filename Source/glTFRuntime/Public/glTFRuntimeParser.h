@@ -51,6 +51,15 @@ enum class EglTFRuntimeTangentsGenerationStrategy : uint8
 	Always
 };
 
+UENUM()
+enum class EglTFRuntimeMorphTargetsDuplicateStrategy : uint8
+{
+	Ignore,
+	Merge,
+	AppendMorphIndex,
+	AppendDuplicateCounter
+};
+
 USTRUCT(BlueprintType)
 struct FglTFRuntimeBasisMatrix
 {
@@ -603,6 +612,15 @@ struct FglTFRuntimeSkeletalMeshConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
 	bool bPerPolyCollision;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	bool bDisableMorphTargets;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	bool bIgnoreEmptyMorphTargets;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	EglTFRuntimeMorphTargetsDuplicateStrategy MorphTargetsDuplicateStrategy;
+
 	FglTFRuntimeSkeletalMeshConfig()
 	{
 		CacheMode = EglTFRuntimeCacheMode::ReadWrite;
@@ -616,6 +634,9 @@ struct FglTFRuntimeSkeletalMeshConfig
 		bMergeAllBonesToBoneTree = false;
 		Outer = nullptr;
 		bPerPolyCollision = false;
+		bDisableMorphTargets = false;
+		bIgnoreEmptyMorphTargets = true;
+		MorphTargetsDuplicateStrategy = EglTFRuntimeMorphTargetsDuplicateStrategy::Ignore;
 	}
 };
 
@@ -885,6 +906,13 @@ struct FglTFRuntimeMaterial
 	bool bKHR_materials_pbrSpecularGlossiness;
 	double NormalTextureScale;
 
+	bool bKHR_materials_transmission;
+	bool bHasTransmissionFactor;
+	double TransmissionFactor;
+	TArray<FglTFRuntimeMipMap> TransmissionTextureMips;
+	UTexture2D* TransmissionTextureCache;
+	int32 TransmissionTexCoord;
+
 	FglTFRuntimeMaterial()
 	{
 		bTwoSided = false;
@@ -915,6 +943,11 @@ struct FglTFRuntimeMaterial
 		DiffuseTexCoord = 0;
 		bKHR_materials_pbrSpecularGlossiness = false;
 		NormalTextureScale = 1;
+		bKHR_materials_transmission = false;
+		bHasTransmissionFactor = true;
+		TransmissionFactor = 0;
+		TransmissionTextureCache = nullptr;
+		TransmissionTexCoord = 0;
 	}
 };
 
