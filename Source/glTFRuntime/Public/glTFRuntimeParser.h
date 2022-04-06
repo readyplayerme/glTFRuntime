@@ -1,4 +1,4 @@
-// Copyright 2020, Roberto De Ioris.
+// Copyright 2020-2022, Roberto De Ioris.
 
 #pragma once
 
@@ -305,6 +305,32 @@ struct FglTFRuntimeMorphTarget
 };
 
 USTRUCT(BlueprintType)
+struct FglTFRuntimeImagesConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	TEnumAsByte<TextureCompressionSettings> Compression;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	TEnumAsByte<TextureGroup> Group;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	bool bSRGB;
+
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	TArray<TSubclassOf<class UglTFRuntimeImageLoader>> AdditionalImageLoaders;
+
+	FglTFRuntimeImagesConfig()
+	{
+		Compression = TextureCompressionSettings::TC_Default;
+		Group = TextureGroup::TEXTUREGROUP_World;
+		bSRGB = false;
+	}
+};
+
+USTRUCT(BlueprintType)
 struct FglTFRuntimeMaterialsConfig
 {
 	GENERATED_BODY()
@@ -344,6 +370,9 @@ struct FglTFRuntimeMaterialsConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
 	TMap<FString, float> ParamsMultiplier;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	FglTFRuntimeImagesConfig ImagesConfig;
 
 	FglTFRuntimeMaterialsConfig()
 	{
@@ -621,6 +650,9 @@ struct FglTFRuntimeSkeletalMeshConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
 	EglTFRuntimeMorphTargetsDuplicateStrategy MorphTargetsDuplicateStrategy;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
+	FVector ShiftBounds;
+
 	FglTFRuntimeSkeletalMeshConfig()
 	{
 		CacheMode = EglTFRuntimeCacheMode::ReadWrite;
@@ -637,6 +669,7 @@ struct FglTFRuntimeSkeletalMeshConfig
 		bDisableMorphTargets = false;
 		bIgnoreEmptyMorphTargets = true;
 		MorphTargetsDuplicateStrategy = EglTFRuntimeMorphTargetsDuplicateStrategy::Ignore;
+		ShiftBounds = FVector::ZeroVector;
 	}
 };
 
@@ -784,7 +817,7 @@ struct FglTFRuntimeSkeletalMeshContext : public FGCObject
 			}
 			else
 			{
-#if ENGINE_MINOR_VERSION >= 26
+#if ENGINE_MAJOR_VERSION > 4 || ENGINE_MINOR_VERSION >= 26
 				Outer = CreatePackage(*InSkeletalMeshConfig.SaveToPackage);
 #else
 				Outer = CreatePackage(nullptr, *InSkeletalMeshConfig.SaveToPackage);
@@ -806,6 +839,11 @@ struct FglTFRuntimeSkeletalMeshContext : public FGCObject
 		SkinIndex = -1;
 	}
 
+	FString GetReferencerName() const override
+	{
+		return "FglTFRuntimeSkeletalMeshContext_Referencer";
+	}
+
 	void AddReferencedObjects(FReferenceCollector& Collector)
 	{
 		Collector.AddReferencedObject(SkeletalMesh);
@@ -825,6 +863,11 @@ struct FglTFRuntimeStaticMeshContext : public FGCObject
 	TArray<FStaticMaterial> StaticMaterials;
 
 	FglTFRuntimeStaticMeshContext(TSharedRef<FglTFRuntimeParser> InParser, const FglTFRuntimeStaticMeshConfig& InStaticMeshConfig);
+
+	FString GetReferencerName() const override
+	{
+		return "FglTFRuntimeStaticMeshContext_Referencer";
+	}
 
 	void AddReferencedObjects(FReferenceCollector& Collector)
 	{
@@ -1082,6 +1125,11 @@ public:
 
 	bool ParseBase64Uri(const FString& Uri, TArray64<uint8>& Bytes);
 
+	FString GetReferencerName() const override
+	{
+		return "FglTFRuntimeParser_Referencer";
+	}
+
 	void AddReferencedObjects(FReferenceCollector& Collector);
 
 	bool LoadPrimitives(TSharedRef<FJsonObject> JsonMeshObject, TArray<FglTFRuntimePrimitive>& Primitives, const FglTFRuntimeMaterialsConfig& MaterialsConfig);
@@ -1124,8 +1172,8 @@ public:
 	TArray<FString> ExtensionsUsed;
 	TArray<FString> ExtensionsRequired;
 
-	bool LoadImage(const int32 ImageIndex, TArray64<uint8>& UncompressedBytes, int32& Width, int32& Height);
-	UTexture2D* BuildTexture(UObject* Outer, const TArray<FglTFRuntimeMipMap>& Mips, const TEnumAsByte<TextureCompressionSettings> Compression, const bool sRGB);
+	bool LoadImage(const int32 ImageIndex, TArray64<uint8>& UncompressedBytes, int32& Width, int32& Height, const FglTFRuntimeImagesConfig& ImagesConfig);
+	UTexture2D* BuildTexture(UObject* Outer, const TArray<FglTFRuntimeMipMap>& Mips, const FglTFRuntimeImagesConfig& ImagesConfig);
 
 protected:
 	TSharedRef<FJsonObject> Root;
@@ -1168,6 +1216,8 @@ protected:
 	int32 FindCommonRoot(const TArray<int32>& NodeIndices);
 	int32 FindTopRoot(int32 NodeIndex);
 	bool HasRoot(int32 NodeIndex, int32 RootIndex);
+
+	TSharedPtr<FJsonObject> GetJsonRoot() const { return Root; }
 
 	bool CheckJsonIndex(TSharedRef<FJsonObject> JsonObject, const FString& FieldName, const int32 Index, TArray<TSharedRef<FJsonValue>>& JsonItems);
 	bool CheckJsonRootIndex(const FString FieldName, const int32 Index, TArray<TSharedRef<FJsonValue>>& JsonItems) { return CheckJsonIndex(Root, FieldName, Index, JsonItems); }
@@ -1292,7 +1342,7 @@ protected:
 			}
 			else
 			{
-				UE_LOG(LogTemp, Error, TEXT("Unsupported type %d"), ComponentType);
+				UE_LOG(LogGLTFRuntime, Error, TEXT("Unsupported type %d"), ComponentType);
 				return false;
 			}
 
@@ -1369,7 +1419,7 @@ protected:
 			}
 			else
 			{
-				UE_LOG(LogTemp, Error, TEXT("Unsupported type %d"), ComponentType);
+				UE_LOG(LogGLTFRuntime, Error, TEXT("Unsupported type %d"), ComponentType);
 				return false;
 			}
 
