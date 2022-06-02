@@ -370,7 +370,10 @@ bool UglTFRuntimeAsset::BuildTransformFromNodeForward(const int32 NodeIndex, con
 	while (Node.ParentIndex != INDEX_NONE)
 	{
 		if (!Parser->LoadNode(Node.ParentIndex, Node))
+		{
 			return false;
+		}
+
 		NodesTree.Add(Node.Transform);
 		if (Node.Index == NodeIndex)
 		{
@@ -552,7 +555,7 @@ UTexture2D* UglTFRuntimeAsset::LoadImage(const int32 ImageIndex, const FglTFRunt
 		Mip.Width = Width;
 		Mip.Height = Height;
 		TArray<FglTFRuntimeMipMap> Mips = { Mip };
-		return Parser->BuildTexture(this, Mips, ImagesConfig);
+		return Parser->BuildTexture(this, Mips, ImagesConfig, FglTFRuntimeTextureSampler());
 	}
 
 	return nullptr;
@@ -568,4 +571,10 @@ TArray<FString> UglTFRuntimeAsset::GetExtensionsRequired() const
 {
 	GLTF_CHECK_PARSER(TArray<FString>());
 	return Parser->ExtensionsRequired;
+}
+
+TArray<FString> UglTFRuntimeAsset::GetMaterialsVariants() const
+{
+	GLTF_CHECK_PARSER(TArray<FString>());
+	return Parser->MaterialsVariants;
 }
