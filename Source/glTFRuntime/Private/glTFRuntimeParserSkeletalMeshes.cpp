@@ -1214,7 +1214,7 @@ USkeletalMesh* FglTFRuntimeParser::FinalizeSkeletalMeshWithLODs(TSharedRef<FglTF
 #if ENGINE_MAJOR_VERSION > 4 || ENGINE_MINOR_VERSION > 26
 					if (SkeletalMeshContext->SkeletalMesh->GetSkeleton()->GetReferenceSkeleton().FindBoneIndex(SourceBodySetup->BoneName) != INDEX_NONE)
 #else
-					if (SkeletalMeshContext->SkeletalMesh->Skeleton()->GetReferenceSkeleton().FindBoneIndex(SourceBodySetup->BoneName) != INDEX_NONE)
+					if (SkeletalMeshContext->SkeletalMesh->Skeleton->GetReferenceSkeleton().FindBoneIndex(SourceBodySetup->BoneName) != INDEX_NONE)
 #endif					
 					{
 						USkeletalBodySetup* NewBodySetup = NewObject<USkeletalBodySetup>(PhysicsAsset, NAME_None, RF_Public);
