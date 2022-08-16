@@ -333,13 +333,15 @@ UMaterialInterface* FglTFRuntimeParser::BuildMaterial(const int32 Index, const F
 
 	if (!BaseMaterial)
 	{
-		return nullptr;
+		AddError("BuildMaterial()", "Unable to find glTFRuntime Material, ensure it has been packaged, falling back to default material");
+		return UMaterial::GetDefaultMaterial(EMaterialDomain::MD_Surface);
 	}
 
 	UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(BaseMaterial, BaseMaterial);
 	if (!Material)
 	{
-		return nullptr;
+		AddError("BuildMaterial()", "Unable to create material instance, falling back to default material");
+		return UMaterial::GetDefaultMaterial(EMaterialDomain::MD_Surface);
 	}
 
 	// make it public to allow exports
@@ -588,13 +590,15 @@ UTexture2D* FglTFRuntimeParser::LoadTexture(const int32 TextureIndex, TArray<Fgl
 	}
 
 	TArray64<uint8> UncompressedBytes;
-	EPixelFormat PixelFormat = EPixelFormat::PF_B8G8R8A8;
+	constexpr EPixelFormat PixelFormat = EPixelFormat::PF_B8G8R8A8;
 	int32 Width = 0;
 	int32 Height = 0;
 	if (!LoadImage(ImageIndex, UncompressedBytes, Width, Height, MaterialsConfig.ImagesConfig))
 	{
 		return nullptr;
 	}
+
+	OnLoadedTexturePixels.Broadcast(AsShared(), JsonTextureObject.ToSharedRef(), Width, Height, reinterpret_cast<FColor*>(UncompressedBytes.GetData()));
 
 	if (Width > 0 && Height > 0 &&
 		(Width % GPixelFormats[PixelFormat].BlockSizeX) == 0 &&
@@ -782,6 +786,7 @@ UMaterialInterface* FglTFRuntimeParser::LoadMaterial(const int32 Index, const Fg
 	UMaterialInterface* Material = LoadMaterial_Internal(Index, MaterialName, JsonMaterialObject.ToSharedRef(), MaterialsConfig, bUseVertexColors);
 	if (!Material)
 	{
+		AddError("LoadMaterial()", "Unable to load material");
 		return nullptr;
 	}
 

@@ -1,4 +1,4 @@
-// Copyright 2020-2021, Roberto De Ioris.
+// Copyright 2020-2022, Roberto De Ioris.
 
 #include "glTFRuntimeParser.h"
 #include "Misc/FileHelper.h"
@@ -10,6 +10,12 @@
 #include "Interfaces/IPluginManager.h"
 
 DEFINE_LOG_CATEGORY(LogGLTFRuntime);
+
+FglTFRuntimeOnPreLoadedPrimitive FglTFRuntimeParser::OnPreLoadedPrimitive;
+FglTFRuntimeOnLoadedPrimitive FglTFRuntimeParser::OnLoadedPrimitive;
+FglTFRuntimeOnLoadedRefSkeleton FglTFRuntimeParser::OnLoadedRefSkeleton;
+FglTFRuntimeOnCreatedPoseTracks FglTFRuntimeParser::OnCreatedPoseTracks;
+FglTFRuntimeOnLoadedTexturePixels FglTFRuntimeParser::OnLoadedTexturePixels;
 
 TSharedPtr<FglTFRuntimeParser> FglTFRuntimeParser::FromFilename(const FString& Filename, const FglTFRuntimeConfig& LoaderConfig)
 {
@@ -959,7 +965,7 @@ bool FglTFRuntimeParser::LoadNode_Internal(int32 Index, TSharedRef<FJsonObject> 
 	return true;
 }
 
-bool FglTFRuntimeParser::LoadAnimation_Internal(TSharedRef<FJsonObject> JsonAnimationObject, float& Duration, FString& Name, TFunctionRef<void(const FglTFRuntimeNode& Node, const FString& Path, const TArray<float> Timeline, const TArray<FVector4> Values)> Callback, TFunctionRef<bool(const FglTFRuntimeNode& Node)> NodeFilter, const TArray<FglTFRuntimePathItem>& OverrideTrackNameFromExtension)
+bool FglTFRuntimeParser::LoadAnimation_Internal(TSharedRef<FJsonObject> JsonAnimationObject, float& Duration, FString& Name, TFunctionRef<void(const FglTFRuntimeNode& Node, const FString& Path, const FglTFRuntimeAnimationCurve& Curve)> Callback, TFunctionRef<bool(const FglTFRuntimeNode& Node)> NodeFilter, const TArray<FglTFRuntimePathItem>& OverrideTrackNameFromExtension)
 {
 	Name = GetJsonObjectString(JsonAnimationObject, "name", "");
 
@@ -971,7 +977,7 @@ bool FglTFRuntimeParser::LoadAnimation_Internal(TSharedRef<FJsonObject> JsonAnim
 
 	Duration = 0.f;
 
-	TArray<TPair<TArray<float>, TArray<FVector4>>> Samplers;
+	TArray<FglTFRuntimeAnimationCurve> Samplers;
 
 	for (int32 SamplerIndex = 0; SamplerIndex < JsonSamplers->Num(); SamplerIndex++)
 	{
@@ -981,15 +987,15 @@ bool FglTFRuntimeParser::LoadAnimation_Internal(TSharedRef<FJsonObject> JsonAnim
 			return false;
 		}
 
-		TArray<float> Timeline;
-		if (!BuildFromAccessorField(JsonSamplerObject.ToSharedRef(), "input", Timeline, { 5126 }, false))
+		FglTFRuntimeAnimationCurve AnimationCurve;
+
+		if (!BuildFromAccessorField(JsonSamplerObject.ToSharedRef(), "input", AnimationCurve.Timeline, { 5126 }, false, INDEX_NONE))
 		{
 			AddError("LoadAnimation_Internal()", FString::Printf(TEXT("Unable to retrieve \"input\" from sampler %d"), SamplerIndex));
 			return false;
 		}
 
-		TArray<FVector4> Values;
-		if (!BuildFromAccessorField(JsonSamplerObject.ToSharedRef(), "output", Values, { 1, 3, 4 }, { 5126, 5120, 5121, 5122, 5123 }, true))
+		if (!BuildFromAccessorField(JsonSamplerObject.ToSharedRef(), "output", AnimationCurve.Values, { 1, 3, 4 }, { 5126, 5120, 5121, 5122, 5123 }, true, INDEX_NONE))
 		{
 			AddError("LoadAnimation_Internal()", FString::Printf(TEXT("Unable to retrieve \"output\" from sampler %d"), SamplerIndex));
 			return false;
@@ -1002,7 +1008,7 @@ bool FglTFRuntimeParser::LoadAnimation_Internal(TSharedRef<FJsonObject> JsonAnim
 		}
 
 		// get animation valid duration
-		for (float Time : Timeline)
+		for (float Time : AnimationCurve.Timeline)
 		{
 			if (Time > Duration)
 			{
@@ -1010,7 +1016,26 @@ bool FglTFRuntimeParser::LoadAnimation_Internal(TSharedRef<FJsonObject> JsonAnim
 			}
 		}
 
-		Samplers.Add(TPair<TArray<float>, TArray<FVector4>>(Timeline, Values));
+		// extract tangents and value (unfortunately Unreal does not support Cubic Splines for skeletal animations)
+		if (SamplerInterpolation == "CUBICSPLINE")
+		{
+			TArray<FVector4> CubicValues;
+			for (int32 TimeIndex = 0; TimeIndex < AnimationCurve.Timeline.Num(); TimeIndex++)
+			{
+				// gather A, V and B
+				FVector4 InTangent = AnimationCurve.Values[TimeIndex * 3];
+				FVector4 Value = AnimationCurve.Values[TimeIndex * 3 + 1];
+				FVector4 OutTangent = AnimationCurve.Values[TimeIndex * 3 + 2];
+
+				AnimationCurve.InTangents.Add(InTangent);
+				AnimationCurve.OutTangents.Add(OutTangent);
+				CubicValues.Add(Value);
+			}
+
+			AnimationCurve.Values = CubicValues;
+		}
+
+		Samplers.Add(AnimationCurve);
 	}
 
 
@@ -1056,7 +1081,7 @@ bool FglTFRuntimeParser::LoadAnimation_Internal(TSharedRef<FJsonObject> JsonAnim
 				}
 			}
 		}
-		
+
 		if (Node.Name.IsEmpty())
 		{
 			int64 NodeIndex;
@@ -1082,7 +1107,7 @@ bool FglTFRuntimeParser::LoadAnimation_Internal(TSharedRef<FJsonObject> JsonAnim
 			return false;
 		}
 
-		Callback(Node, Path, Samplers[Sampler].Key, Samplers[Sampler].Value);
+		Callback(Node, Path, Samplers[Sampler]);
 	}
 
 	return true;
@@ -1139,45 +1164,45 @@ UglTFRuntimeAnimationCurve* FglTFRuntimeParser::LoadNodeAnimationCurve(const int
 
 	bool bAnimationFound = false;
 
-	auto Callback = [&](const FglTFRuntimeNode& Node, const FString& Path, const TArray<float> Timeline, const TArray<FVector4> Values)
+	auto Callback = [&](const FglTFRuntimeNode& Node, const FString& Path, const FglTFRuntimeAnimationCurve& Curve)
 	{
 		if (Path == "translation")
 		{
-			if (Timeline.Num() != Values.Num())
+			if (Curve.Timeline.Num() != Curve.Values.Num())
 			{
-				AddError("LoadNodeAnimationCurve()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for translation on node %d"), Timeline.Num(), Values.Num(), Node.Index));
+				AddError("LoadNodeAnimationCurve()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for translation on node %d"), Curve.Timeline.Num(), Curve.Values.Num(), Node.Index));
 				return;
 			}
-			for (int32 TimeIndex = 0; TimeIndex < Timeline.Num(); TimeIndex++)
+			for (int32 TimeIndex = 0; TimeIndex < Curve.Timeline.Num(); TimeIndex++)
 			{
-				AnimationCurve->AddLocationValue(Timeline[TimeIndex], Values[TimeIndex] * SceneScale, ERichCurveInterpMode::RCIM_Linear);
+				AnimationCurve->AddLocationValue(Curve.Timeline[TimeIndex], Curve.Values[TimeIndex] * SceneScale, ERichCurveInterpMode::RCIM_Linear);
 			}
 		}
 		else if (Path == "rotation")
 		{
-			if (Timeline.Num() != Values.Num())
+			if (Curve.Timeline.Num() != Curve.Values.Num())
 			{
-				AddError("LoadNodeAnimationCurve()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for rotation on node %d"), Timeline.Num(), Values.Num(), Node.Index));
+				AddError("LoadNodeAnimationCurve()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for rotation on node %d"), Curve.Timeline.Num(), Curve.Values.Num(), Node.Index));
 				return;
 			}
-			for (int32 TimeIndex = 0; TimeIndex < Timeline.Num(); TimeIndex++)
+			for (int32 TimeIndex = 0; TimeIndex < Curve.Timeline.Num(); TimeIndex++)
 			{
-				FVector4 RotationValue = Values[TimeIndex];
+				FVector4 RotationValue = Curve.Values[TimeIndex];
 				FQuat Quat(RotationValue.X, RotationValue.Y, RotationValue.Z, RotationValue.W);
 				FVector Euler = Quat.Euler();
-				AnimationCurve->AddRotationValue(Timeline[TimeIndex], Euler, ERichCurveInterpMode::RCIM_Linear);
+				AnimationCurve->AddRotationValue(Curve.Timeline[TimeIndex], Euler, ERichCurveInterpMode::RCIM_Linear);
 			}
 		}
 		else if (Path == "scale")
 		{
-			if (Timeline.Num() != Values.Num())
+			if (Curve.Timeline.Num() != Curve.Values.Num())
 			{
-				AddError("LoadNodeAnimationCurve()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for scale on node %d"), Timeline.Num(), Values.Num(), Node.Index));
+				AddError("LoadNodeAnimationCurve()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for scale on node %d"), Curve.Timeline.Num(), Curve.Values.Num(), Node.Index));
 				return;
 			}
-			for (int32 TimeIndex = 0; TimeIndex < Timeline.Num(); TimeIndex++)
+			for (int32 TimeIndex = 0; TimeIndex < Curve.Timeline.Num(); TimeIndex++)
 			{
-				AnimationCurve->AddScaleValue(Timeline[TimeIndex], Values[TimeIndex], ERichCurveInterpMode::RCIM_Linear);
+				AnimationCurve->AddScaleValue(Curve.Timeline[TimeIndex], Curve.Values[TimeIndex], ERichCurveInterpMode::RCIM_Linear);
 			}
 		}
 		bAnimationFound = true;
@@ -1232,45 +1257,45 @@ TArray<UglTFRuntimeAnimationCurve*> FglTFRuntimeParser::LoadAllNodeAnimationCurv
 
 	bool bAnimationFound = false;
 
-	auto Callback = [&](const FglTFRuntimeNode& Node, const FString& Path, const TArray<float> Timeline, const TArray<FVector4> Values)
+	auto Callback = [&](const FglTFRuntimeNode& Node, const FString& Path, const FglTFRuntimeAnimationCurve& Curve)
 	{
 		if (Path == "translation")
 		{
-			if (Timeline.Num() != Values.Num())
+			if (Curve.Timeline.Num() != Curve.Values.Num())
 			{
-				AddError("LoadAllNodeAnimationCurves()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for translation on node %d"), Timeline.Num(), Values.Num(), Node.Index));
+				AddError("LoadAllNodeAnimationCurves()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for translation on node %d"), Curve.Timeline.Num(), Curve.Values.Num(), Node.Index));
 				return;
 			}
-			for (int32 TimeIndex = 0; TimeIndex < Timeline.Num(); TimeIndex++)
+			for (int32 TimeIndex = 0; TimeIndex < Curve.Timeline.Num(); TimeIndex++)
 			{
-				AnimationCurve->AddLocationValue(Timeline[TimeIndex], Values[TimeIndex] * SceneScale, ERichCurveInterpMode::RCIM_Linear);
+				AnimationCurve->AddLocationValue(Curve.Timeline[TimeIndex], Curve.Values[TimeIndex] * SceneScale, ERichCurveInterpMode::RCIM_Linear);
 			}
 		}
 		else if (Path == "rotation")
 		{
-			if (Timeline.Num() != Values.Num())
+			if (Curve.Timeline.Num() != Curve.Values.Num())
 			{
-				AddError("LoadAllNodeAnimationCurves()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for rotation on node %d"), Timeline.Num(), Values.Num(), Node.Index));
+				AddError("LoadAllNodeAnimationCurves()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for rotation on node %d"), Curve.Timeline.Num(), Curve.Values.Num(), Node.Index));
 				return;
 			}
-			for (int32 TimeIndex = 0; TimeIndex < Timeline.Num(); TimeIndex++)
+			for (int32 TimeIndex = 0; TimeIndex < Curve.Timeline.Num(); TimeIndex++)
 			{
-				FVector4 RotationValue = Values[TimeIndex];
+				FVector4 RotationValue = Curve.Values[TimeIndex];
 				FQuat Quat(RotationValue.X, RotationValue.Y, RotationValue.Z, RotationValue.W);
 				FVector Euler = Quat.Euler();
-				AnimationCurve->AddRotationValue(Timeline[TimeIndex], Euler, ERichCurveInterpMode::RCIM_Linear);
+				AnimationCurve->AddRotationValue(Curve.Timeline[TimeIndex], Euler, ERichCurveInterpMode::RCIM_Linear);
 			}
 		}
 		else if (Path == "scale")
 		{
-			if (Timeline.Num() != Values.Num())
+			if (Curve.Timeline.Num() != Curve.Values.Num())
 			{
-				AddError("LoadAllNodeAnimationCurves()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for scale on node %d"), Timeline.Num(), Values.Num(), Node.Index));
+				AddError("LoadAllNodeAnimationCurves()", FString::Printf(TEXT("Animation input/output mismatch (%d/%d) for scale on node %d"), Curve.Timeline.Num(), Curve.Values.Num(), Node.Index));
 				return;
 			}
-			for (int32 TimeIndex = 0; TimeIndex < Timeline.Num(); TimeIndex++)
+			for (int32 TimeIndex = 0; TimeIndex < Curve.Timeline.Num(); TimeIndex++)
 			{
-				AnimationCurve->AddScaleValue(Timeline[TimeIndex], Values[TimeIndex], ERichCurveInterpMode::RCIM_Linear);
+				AnimationCurve->AddScaleValue(Curve.Timeline[TimeIndex], Curve.Values[TimeIndex], ERichCurveInterpMode::RCIM_Linear);
 			}
 		}
 		bAnimationFound = true;
@@ -1610,6 +1635,8 @@ bool FglTFRuntimeParser::FillFakeSkeleton(FReferenceSkeleton& RefSkeleton, TMap<
 		BoneMap.Add(0, RootBoneName);
 	}
 
+	OnLoadedRefSkeleton.Broadcast(AsShared(), nullptr, Modifier);
+
 	return true;
 }
 
@@ -1695,7 +1722,7 @@ bool FglTFRuntimeParser::FillReferenceSkeleton(TSharedRef<FJsonObject> JsonSkinO
 		FglTFRuntimeBlob InverseBindMatricesBytes;
 		int64 ComponentType, Stride, Elements, ElementSize, Count;
 		bool bNormalized = false;
-		if (!GetAccessor(inverseBindMatricesIndex, ComponentType, Stride, Elements, ElementSize, Count, bNormalized, InverseBindMatricesBytes))
+		if (!GetAccessor(inverseBindMatricesIndex, ComponentType, Stride, Elements, ElementSize, Count, bNormalized, InverseBindMatricesBytes, nullptr))
 		{
 			AddError("FillReferenceSkeleton()", FString::Printf(TEXT("Unable to load accessor: %lld."), inverseBindMatricesIndex));
 			return false;
@@ -1736,6 +1763,8 @@ bool FglTFRuntimeParser::FillReferenceSkeleton(TSharedRef<FJsonObject> JsonSkinO
 	{
 		return false;
 	}
+
+	OnLoadedRefSkeleton.Broadcast(AsShared(), JsonSkinObject, Modifier);
 
 	return true;
 }
@@ -1933,6 +1962,8 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 {
 	SCOPED_NAMED_EVENT(FglTFRuntimeParser_LoadPrimitive, FColor::Magenta);
 
+	OnPreLoadedPrimitive.Broadcast(AsShared(), JsonPrimitiveObject, Primitive);
+
 	const TSharedPtr<FJsonObject>* JsonAttributesObject;
 	if (!JsonPrimitiveObject->TryGetObjectField("attributes", JsonAttributesObject))
 	{
@@ -1962,7 +1993,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	}
 
 	if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "POSITION", Primitive.Positions,
-		{ 3 }, SupportedPositionComponentTypes, false, [&](FVector Value) -> FVector {return SceneBasis.TransformPosition(Value) * SceneScale; }))
+		{ 3 }, SupportedPositionComponentTypes, false, [&](FVector Value) -> FVector {return SceneBasis.TransformPosition(Value) * SceneScale; }, Primitive.AdditionalBufferView))
 	{
 		AddError("LoadPrimitive()", "Unable to load POSITION attribute");
 		return false;
@@ -1971,7 +2002,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	if ((*JsonAttributesObject)->HasField("NORMAL"))
 	{
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "NORMAL", Primitive.Normals,
-			{ 3 }, SupportedNormalComponentTypes, false, [&](FVector Value) -> FVector { return SceneBasis.TransformVector(Value); }))
+			{ 3 }, SupportedNormalComponentTypes, false, [&](FVector Value) -> FVector { return SceneBasis.TransformVector(Value); }, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Unable to load NORMAL attribute");
 			return false;
@@ -1981,7 +2012,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	if ((*JsonAttributesObject)->HasField("TANGENT"))
 	{
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "TANGENT", Primitive.Tangents,
-			{ 4 }, SupportedTangentComponentTypes, false, [&](FVector4 Value) -> FVector4 { return SceneBasis.TransformFVector4(Value); }))
+			{ 4 }, SupportedTangentComponentTypes, false, [&](FVector4 Value) -> FVector4 { return SceneBasis.TransformFVector4(Value); }, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Unable to load TANGENT attribute");
 			return false;
@@ -1992,7 +2023,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	{
 		TArray<FVector2D> UV;
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "TEXCOORD_0", UV,
-			{ 2 }, SupportedTexCoordComponentTypes, true, [&](FVector2D Value) -> FVector2D {return FVector2D(Value.X, Value.Y); }))
+			{ 2 }, SupportedTexCoordComponentTypes, true, [&](FVector2D Value) -> FVector2D {return FVector2D(Value.X, Value.Y); }, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Error loading TEXCOORD_0");
 			return false;
@@ -2005,7 +2036,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	{
 		TArray<FVector2D> UV;
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "TEXCOORD_1", UV,
-			{ 2 }, SupportedTexCoordComponentTypes, true, [&](FVector2D Value) -> FVector2D {return FVector2D(Value.X, Value.Y); }))
+			{ 2 }, SupportedTexCoordComponentTypes, true, [&](FVector2D Value) -> FVector2D {return FVector2D(Value.X, Value.Y); }, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Error loading TEXCOORD_1");
 			return false;
@@ -2018,7 +2049,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	{
 		TArray<FglTFRuntimeUInt16Vector4> Joints;
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "JOINTS_0", Joints,
-			{ 4 }, { 5121, 5123 }, false))
+			{ 4 }, { 5121, 5123 }, false, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Error loading JOINTS_0");
 			return false;
@@ -2031,7 +2062,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	{
 		TArray<FglTFRuntimeUInt16Vector4> Joints;
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "JOINTS_1", Joints,
-			{ 4 }, { 5121, 5123 }, false))
+			{ 4 }, { 5121, 5123 }, false, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Error loading JOINTS_1");
 			return false;
@@ -2044,7 +2075,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	{
 		TArray<FVector4> Weights;
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "WEIGHTS_0", Weights,
-			{ 4 }, { 5126, 5121, 5123 }, true))
+			{ 4 }, { 5126, 5121, 5123 }, true, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Error loading WEIGHTS_0");
 			return false;
@@ -2056,7 +2087,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	{
 		TArray<FVector4> Weights;
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "WEIGHTS_1", Weights,
-			{ 4 }, { 5126, 5121, 5123 }, true))
+			{ 4 }, { 5126, 5121, 5123 }, true, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Error loading WEIGHTS_1");
 			return false;
@@ -2067,7 +2098,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 	if ((*JsonAttributesObject)->HasField("COLOR_0"))
 	{
 		if (!BuildFromAccessorField(JsonAttributesObject->ToSharedRef(), "COLOR_0", Primitive.Colors,
-			{ 3, 4 }, { 5126, 5121, 5123 }, true))
+			{ 3, 4 }, { 5126, 5121, 5123 }, true, Primitive.AdditionalBufferView))
 		{
 			AddError("LoadPrimitive()", "Error loading COLOR_0");
 			return false;
@@ -2093,7 +2124,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 			if (JsonTargetObject->HasField("POSITION"))
 			{
 				if (!BuildFromAccessorField(JsonTargetObject.ToSharedRef(), "POSITION", MorphTarget.Positions,
-					{ 3 }, { 5126 }, false, [&](FVector Value) -> FVector { return SceneBasis.TransformPosition(Value) * SceneScale; }))
+					{ 3 }, { 5126 }, false, [&](FVector Value) -> FVector { return SceneBasis.TransformPosition(Value) * SceneScale; }, INDEX_NONE))
 				{
 					AddError("LoadPrimitive()", "Unable to load POSITION attribute for MorphTarget");
 					return false;
@@ -2109,7 +2140,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 			if (JsonTargetObject->HasField("NORMAL"))
 			{
 				if (!BuildFromAccessorField(JsonTargetObject.ToSharedRef(), "NORMAL", MorphTarget.Normals,
-					{ 3 }, { 5126 }, false, [&](FVector Value) -> FVector { return SceneBasis.TransformVector(Value); }))
+					{ 3 }, { 5126 }, false, [&](FVector Value) -> FVector { return SceneBasis.TransformVector(Value); }, INDEX_NONE))
 				{
 					AddError("LoadPrimitive()", "Unable to load NORMAL attribute for MorphTarget");
 					return false;
@@ -2135,7 +2166,7 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 		FglTFRuntimeBlob IndicesBytes;
 		int64 ComponentType, Stride, Elements, ElementSize, Count;
 		bool bNormalized = false;
-		if (!GetAccessor(IndicesAccessorIndex, ComponentType, Stride, Elements, ElementSize, Count, bNormalized, IndicesBytes))
+		if (!GetAccessor(IndicesAccessorIndex, ComponentType, Stride, Elements, ElementSize, Count, bNormalized, IndicesBytes, GetAdditionalBufferView(Primitive.AdditionalBufferView, "indices")))
 		{
 			AddError("LoadPrimitive()", FString::Printf(TEXT("Unable to load accessor: %lld"), IndicesAccessorIndex));
 			return false;
@@ -2190,34 +2221,6 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 		}
 	}
 
-	// Draco decompression
-	const TSharedPtr<FJsonObject>* JsonExtensions;
-	if (JsonPrimitiveObject->TryGetObjectField("extensions", JsonExtensions))
-	{
-		// KHR_draco_mesh_compression
-		const TSharedPtr<FJsonObject>* KHR_draco_mesh_compression;
-		if ((*JsonExtensions)->TryGetObjectField("KHR_draco_mesh_compression", KHR_draco_mesh_compression))
-		{
-			int64 BufferView;
-			if (!(*KHR_draco_mesh_compression)->TryGetNumberField("bufferView", BufferView))
-			{
-				AddError("LoadPrimitive()", "KHR_draco_mesh_compression requires a valid bufferView");
-				return false;
-			}
-
-			FglTFRuntimeBlob DracoBlob;
-			int64 Stride;
-			if (!GetBufferView(BufferView, DracoBlob, Stride))
-			{
-				AddError("LoadPrimitive()", "KHR_draco_mesh_compression has an invalid bufferView");
-				return false;
-			}
-
-			AddError("LoadPrimitive()", "KHR_draco_mesh_compression extension is currently not supported");
-			return false;
-		}
-	}
-
 	Primitive.Material = UMaterial::GetDefaultMaterial(MD_Surface);
 
 	int64 MaterialIndex = INDEX_NONE;
@@ -2266,6 +2269,8 @@ bool FglTFRuntimeParser::LoadPrimitive(TSharedRef<FJsonObject> JsonPrimitiveObje
 			return false;
 		}
 	}
+
+	OnLoadedPrimitive.Broadcast(AsShared(), JsonPrimitiveObject, Primitive);
 
 	return true;
 }
@@ -2454,7 +2459,7 @@ bool FglTFRuntimeParser::GetBufferView(int32 Index, FglTFRuntimeBlob& Blob, int6
 	return true;
 }
 
-bool FglTFRuntimeParser::GetAccessor(int32 Index, int64& ComponentType, int64& Stride, int64& Elements, int64& ElementSize, int64& Count, bool& bNormalized, FglTFRuntimeBlob& Blob)
+bool FglTFRuntimeParser::GetAccessor(int32 Index, int64& ComponentType, int64& Stride, int64& Elements, int64& ElementSize, int64& Count, bool& bNormalized, FglTFRuntimeBlob& Blob, const FglTFRuntimeBlob* AdditionalBufferView)
 {
 
 	TSharedPtr<FJsonObject> JsonAccessorObject = GetJsonObjectFromRootIndex("accessors", Index);
@@ -2466,22 +2471,27 @@ bool FglTFRuntimeParser::GetAccessor(int32 Index, int64& ComponentType, int64& S
 	bool bInitWithZeros = false;
 	bool bHasSparse = false;
 
-	int64 BufferViewIndex;
-	if (!JsonAccessorObject->TryGetNumberField("bufferView", BufferViewIndex))
+	int64 BufferViewIndex = INDEX_NONE;
+	int64 ByteOffset = 0;
+
+	if (!AdditionalBufferView)
 	{
-		bInitWithZeros = true;
+		if (!JsonAccessorObject->TryGetNumberField("bufferView", BufferViewIndex))
+		{
+			bInitWithZeros = true;
+		}
+
+
+		if (!JsonAccessorObject->TryGetNumberField("byteOffset", ByteOffset))
+		{
+			ByteOffset = 0;
+		}
 	}
 
 	const TSharedPtr<FJsonObject>* JsonSparseObject = nullptr;
 	if (JsonAccessorObject->TryGetObjectField("sparse", JsonSparseObject))
 	{
 		bHasSparse = true;
-	}
-
-	int64 ByteOffset;
-	if (!JsonAccessorObject->TryGetNumberField("byteOffset", ByteOffset))
-	{
-		ByteOffset = 0;
 	}
 
 	if (!JsonAccessorObject->TryGetBoolField("normalized", bNormalized))
@@ -2519,8 +2529,23 @@ bool FglTFRuntimeParser::GetAccessor(int32 Index, int64& ComponentType, int64& S
 
 	int64 FinalSize = ElementSize * Elements * Count;
 
-	if (bInitWithZeros)
+	if (AdditionalBufferView)
 	{
+		if (AdditionalBufferView->Num < FinalSize)
+		{
+			return false;
+		}
+		Blob.Data = AdditionalBufferView->Data;
+		Blob.Num = FinalSize;
+		if (!bHasSparse)
+		{
+			Stride = ElementSize * Elements;
+			return true;
+		}
+	}
+	else if (bInitWithZeros)
+	{
+
 		if (ZeroBuffer.Num() < FinalSize)
 		{
 			ZeroBuffer.AddZeroed(FinalSize - ZeroBuffer.Num());
@@ -2774,8 +2799,14 @@ float FglTFRuntimeParser::FindBestFrames(const TArray<float>& FramesTimes, float
 	// first search for second (higher value)
 	for (int32 i = 0; i < FramesTimes.Num(); i++)
 	{
-		float TimeValue = FramesTimes[i];
-		if (TimeValue >= WantedTime)
+		float TimeValue = FramesTimes[i] - FramesTimes[0];
+		if (FMath::IsNearlyEqual(TimeValue, WantedTime))
+		{
+			FirstIndex = i;
+			SecondIndex = i;
+			return 0;
+		}
+		else if (TimeValue > WantedTime)
 		{
 			SecondIndex = i;
 			break;
@@ -2796,7 +2827,7 @@ float FglTFRuntimeParser::FindBestFrames(const TArray<float>& FramesTimes, float
 
 	FirstIndex = SecondIndex - 1;
 
-	return (WantedTime - FramesTimes[FirstIndex]) / FramesTimes[SecondIndex];
+	return ((WantedTime + FramesTimes[0]) - FramesTimes[FirstIndex]) / (FramesTimes[SecondIndex] - FramesTimes[FirstIndex]);
 }
 
 bool FglTFRuntimeParser::MergePrimitives(TArray<FglTFRuntimePrimitive> SourcePrimitives, FglTFRuntimePrimitive& OutPrimitive)
@@ -3211,4 +3242,129 @@ FVector FglTFRuntimeParser::ComputeTangentY(const FVector Normal, const FVector 
 FVector FglTFRuntimeParser::ComputeTangentYWithW(const FVector Normal, const FVector TangetX, const float W)
 {
 	return (Normal ^ TangetX) * W;
+}
+
+TArray<TSharedRef<FJsonObject>> FglTFRuntimeParser::GetMeshes() const
+{
+	TArray<TSharedRef<FJsonObject>> Meshes;
+
+	const TArray<TSharedPtr<FJsonValue>>* JsonArray;
+	if (Root->TryGetArrayField("meshes", JsonArray))
+	{
+		for (TSharedPtr<FJsonValue> JsonValue : *JsonArray)
+		{
+			const TSharedPtr<FJsonObject>* JsonObject;
+			if (JsonValue->TryGetObject(JsonObject))
+			{
+				Meshes.Add(JsonObject->ToSharedRef());
+			}
+		}
+	}
+
+	return Meshes;
+}
+
+TArray<TSharedRef<FJsonObject>> FglTFRuntimeParser::GetMeshPrimitives(TSharedRef<FJsonObject> Mesh) const
+{
+	TArray<TSharedRef<FJsonObject>> Primitives;
+
+	const TArray<TSharedPtr<FJsonValue>>* JsonArray;
+	if (Mesh->TryGetArrayField("primitives", JsonArray))
+	{
+		for (TSharedPtr<FJsonValue> JsonValue : *JsonArray)
+		{
+			const TSharedPtr<FJsonObject>* JsonObject;
+			if (JsonValue->TryGetObject(JsonObject))
+			{
+				Primitives.Add(JsonObject->ToSharedRef());
+			}
+		}
+	}
+
+	return Primitives;
+}
+
+TSharedPtr<FJsonObject> FglTFRuntimeParser::GetJsonObjectExtras(TSharedRef<FJsonObject> JsonObject) const
+{
+	return GetJsonObjectFromObject(JsonObject, "extras");
+}
+
+TSharedPtr<FJsonObject> FglTFRuntimeParser::GetJsonObjectFromObject(TSharedRef<FJsonObject> JsonObject, const FString& Name) const
+{
+	const TSharedPtr<FJsonObject>* ExtrasObject = nullptr;
+	if (JsonObject->TryGetObjectField(Name, ExtrasObject))
+	{
+		return *ExtrasObject;
+	}
+	return nullptr;
+}
+
+TSharedPtr<FJsonObject> FglTFRuntimeParser::GetJsonObjectExtension(TSharedRef<FJsonObject> JsonObject, const FString& Name) const
+{
+	const TSharedPtr<FJsonObject>* ExtensionsObject = nullptr;
+	if (JsonObject->TryGetObjectField("extensions", ExtensionsObject))
+	{
+		const TSharedPtr<FJsonObject>* RequestedExtensionObject = nullptr;
+		if ((*ExtensionsObject)->TryGetObjectField(Name, RequestedExtensionObject))
+		{
+			return *RequestedExtensionObject;
+		}
+	}
+	return nullptr;
+}
+
+int64 FglTFRuntimeParser::GetJsonObjectIndex(TSharedRef<FJsonObject> JsonObject, const FString& Name) const
+{
+	int64 Index;
+	if (JsonObject->TryGetNumberField(Name, Index))
+	{
+		return Index;
+	}
+	return INDEX_NONE;
+}
+
+const FglTFRuntimeBlob* FglTFRuntimeParser::GetAdditionalBufferView(const int64 Index, const FString& Name) const
+{
+	if (Index <= INDEX_NONE)
+	{
+		return nullptr;
+	}
+
+	const TMap<FString, FglTFRuntimeBlob>* Value = AdditionalBufferViewsCache.Find(Index);
+	if (!Value)
+	{
+		return nullptr;
+	}
+
+	if (!Value->Contains(Name))
+	{
+		return nullptr;
+	}
+
+	const FglTFRuntimeBlob& Blob = (*Value)[Name];
+
+	return &Blob;
+}
+
+void FglTFRuntimeParser::AddAdditionalBufferView(const int64 Index, const FString& Name, const FglTFRuntimeBlob& Blob)
+{
+	if (Index <= INDEX_NONE)
+	{
+		return;
+	}
+
+	if (!AdditionalBufferViewsCache.Contains(Index))
+	{
+		AdditionalBufferViewsCache.Add(Index);
+	}
+
+	if (!AdditionalBufferViewsCache[Index].Contains(Name))
+	{
+		AdditionalBufferViewsCache[Index].Add(Name, Blob);
+	}
+	else
+	{
+		AdditionalBufferViewsCache[Index][Name] = Blob;
+	}
+
 }
