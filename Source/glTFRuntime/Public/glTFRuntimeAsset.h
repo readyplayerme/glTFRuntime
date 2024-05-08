@@ -38,10 +38,13 @@ public:
 	bool LoadMeshAsRuntimeLOD(const int32 MeshIndex, FglTFRuntimeMeshLOD& RuntimeLOD, const FglTFRuntimeMaterialsConfig& MaterialsConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "MaterialsConfig, SkeletonConfig, OverrideSkinIndex", AutoCreateRefTerm = "MaterialsConfig, SkeletonConfig, ExcludeNodes"), Category = "glTFRuntime")
-	bool LoadSkinnedMeshRecursiveAsRuntimeLOD(const FString& NodeName, const TArray<FString>& ExcludeNodes, FglTFRuntimeMeshLOD& RuntimeLOD, const FglTFRuntimeMaterialsConfig& MaterialsConfig, const FglTFRuntimeSkeletonConfig& SkeletonConfig, int32& SkinIndex, const int32 OverrideSkinIndex = -1);
+	bool LoadSkinnedMeshRecursiveAsRuntimeLOD(const FString& NodeName, const TArray<FString>& ExcludeNodes, FglTFRuntimeMeshLOD& RuntimeLOD, const FglTFRuntimeMaterialsConfig& MaterialsConfig, const FglTFRuntimeSkeletonConfig& SkeletonConfig, int32& SkinIndex, const int32 OverrideSkinIndex = -1, const EglTFRuntimeRecursiveMode TransformApplyRecursiveMode = EglTFRuntimeRecursiveMode::Ignore);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "StaticMeshConfig", AutoCreateRefTerm = "StaticMeshConfig"), Category = "glTFRuntime")
 	UStaticMesh* LoadStaticMeshFromRuntimeLODs(const TArray<FglTFRuntimeMeshLOD>& RuntimeLODs, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "StaticMeshConfig", AutoCreateRefTerm = "StaticMeshConfig"), Category = "glTFRuntime")
+	void LoadStaticMeshFromRuntimeLODsAsync(const TArray<FglTFRuntimeMeshLOD>& RuntimeLODs, const FglTFRuntimeStaticMeshAsync& AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
 	
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "StaticMeshConfig", AutoCreateRefTerm = "StaticMeshConfig"), Category = "glTFRuntime")
 	UStaticMesh* LoadStaticMesh(const int32 MeshIndex, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
@@ -62,25 +65,34 @@ public:
 	UStaticMesh* LoadStaticMeshRecursive(const FString& NodeName, const TArray<FString>& ExcludeNodes, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "StaticMeshConfig", AutoCreateRefTerm = "ExcludeNodes, StaticMeshConfig"), Category = "glTFRuntime")
-	void LoadStaticMeshRecursiveAsync(const FString& NodeName, const TArray<FString>& ExcludeNodes, FglTFRuntimeStaticMeshAsync AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
+	void LoadStaticMeshRecursiveAsync(const FString& NodeName, const TArray<FString>& ExcludeNodes, const FglTFRuntimeStaticMeshAsync& AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalMeshConfig", AutoCreateRefTerm = "SkeletalMeshConfig"), Category = "glTFRuntime")
 	USkeletalMesh* LoadSkeletalMesh(const int32 MeshIndex, const int32 SkinIndex, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalMeshConfig", AutoCreateRefTerm = "SkeletalMeshConfig"), Category = "glTFRuntime")
-	void LoadSkeletalMeshAsync(const int32 MeshIndex, const int32 SkinIndex, FglTFRuntimeSkeletalMeshAsync AsyncCallback, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig);
+	void LoadSkeletalMeshAsync(const int32 MeshIndex, const int32 SkinIndex, const FglTFRuntimeSkeletalMeshAsync& AsyncCallback, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalMeshConfig", AutoCreateRefTerm = "ExcludeNodes, SkeletalMeshConfig"), Category = "glTFRuntime")
-	USkeletalMesh* LoadSkeletalMeshRecursive(const FString& NodeName, const TArray<FString>& ExcludeNodes, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig);
+	USkeletalMesh* LoadSkeletalMeshRecursive(const FString& NodeName, const TArray<FString>& ExcludeNodes, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig, const EglTFRuntimeRecursiveMode TransformApplyRecursiveMode = EglTFRuntimeRecursiveMode::Ignore);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalMeshConfig", AutoCreateRefTerm = "ExcludeNodes, SkeletalMeshConfig"), Category = "glTFRuntime")
-	void LoadSkeletalMeshRecursiveAsync(const FString& NodeName, const TArray<FString>& ExcludeNodes, FglTFRuntimeSkeletalMeshAsync AsyncCallback, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig);
+	void LoadSkeletalMeshRecursiveAsync(const FString& NodeName, const TArray<FString>& ExcludeNodes, const FglTFRuntimeSkeletalMeshAsync& AsyncCallback, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig, const EglTFRuntimeRecursiveMode TransformApplyRecursiveMode = EglTFRuntimeRecursiveMode::Ignore);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalMeshConfig", AutoCreateRefTerm = "SkeletalMeshConfig"), Category = "glTFRuntime")
 	USkeletalMesh* LoadSkeletalMeshFromRuntimeLODs(const TArray<FglTFRuntimeMeshLOD>& RuntimeLODs, const int32 SkinIndex, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig);
 
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalMeshConfig", AutoCreateRefTerm = "SkeletalMeshConfig"), Category = "glTFRuntime")
+	void LoadSkeletalMeshFromRuntimeLODsAsync(const TArray<FglTFRuntimeMeshLOD>& RuntimeLODs, const int32 SkinIndex, const FglTFRuntimeSkeletalMeshAsync& AsyncCallback, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig);
+
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletonConfig", AutoCreateRefTerm = "SkeletonConfig"), Category = "glTFRuntime")
 	USkeleton* LoadSkeleton(const int32 SkinIndex, const FglTFRuntimeSkeletonConfig& SkeletonConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletonConfig", AutoCreateRefTerm = "SkeletonConfig"), Category = "glTFRuntime")
+	USkeleton* LoadSkeletonFromNodeTree(const int32 NodeIndex, const FglTFRuntimeSkeletonConfig& SkeletonConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletonConfig", AutoCreateRefTerm = "SkeletonConfig"), Category = "glTFRuntime")
+	USkeleton* LoadSkeletonFromNodeTreeByName(const FString& NodeName, const FglTFRuntimeSkeletonConfig& SkeletonConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalMeshConfig", AutoCreateRefTerm = "SkeletalMeshConfig"), Category = "glTFRuntime")
 	USkeletalMesh* LoadSkeletalMeshLODs(const TArray<int32>& MeshIndices, const int32 SkinIndex, const FglTFRuntimeSkeletalMeshConfig& SkeletalMeshConfig);
@@ -93,6 +105,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalAnimationConfig", AutoCreateRefTerm = "SkeletalAnimationConfig"), Category = "glTFRuntime")
 	UAnimSequence* LoadNodeSkeletalAnimation(USkeletalMesh* SkeletalMesh, const int32 NodeIndex, const FglTFRuntimeSkeletalAnimationConfig& SkeletalAnimationConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalAnimationConfig", AutoCreateRefTerm = "SkeletalAnimationConfig"), Category = "glTFRuntime")
+	TMap<FString, UAnimSequence*> LoadNodeSkeletalAnimationsMap(USkeletalMesh* SkeletalMesh, const int32 NodeIndex, const FglTFRuntimeSkeletalAnimationConfig& SkeletalAnimationConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalAnimationConfig", AutoCreateRefTerm = "SkeletalAnimationConfig"), Category = "glTFRuntime")
 	UAnimMontage* LoadSkeletalAnimationAsMontage(USkeletalMesh* SkeletalMesh, const int32 AnimationIndex, const FString& SlotNodeName, const FglTFRuntimeSkeletalAnimationConfig& SkeletalAnimationConfig);
@@ -118,6 +133,12 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
 	int32 GetNumImages() const;
 
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	int32 GetNumAnimations() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	TArray<FString> GetAnimationsNames(const bool bIncludeUnnameds = true) const;
+
 	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
 	bool LoadCamera(const int32 CameraIndex, UCameraComponent* CameraComponent);
 
@@ -134,6 +155,9 @@ public:
 	bool GetNodeExtensionIndex(const int32 NodeIndex, const FString& ExtensionName, const FString& FieldName, int32& Index);
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	bool GetNodeExtrasNumbers(const int32 NodeIndex, const FString& Key, TArray<float>& Values);
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
 	bool BuildTransformFromNodeBackward(const int32 NodeIndex, FTransform& Transform);
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
@@ -145,8 +169,11 @@ public:
 	bool LoadFromFilename(const FString& Filename, const FglTFRuntimeConfig& LoaderConfig);
 	bool LoadFromString(const FString& JsonData, const FglTFRuntimeConfig& LoaderConfig);
 	bool LoadFromData(const uint8* DataPtr, int64 DataNum, const FglTFRuntimeConfig& LoaderConfig);
+	
 	FORCEINLINE bool LoadFromData(const TArray<uint8>& Data, const FglTFRuntimeConfig& LoaderConfig) { return LoadFromData(Data.GetData(), Data.Num(), LoaderConfig); }
 	FORCEINLINE bool LoadFromData(const TArray64<uint8>& Data, const FglTFRuntimeConfig& LoaderConfig) { return LoadFromData(Data.GetData(), Data.Num(), LoaderConfig); }
+
+	bool SetParser(TSharedRef<FglTFRuntimeParser> InParser);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTFRuntime")
 	TMap<EglTFRuntimeMaterialType, UMaterialInterface*> MaterialsMap;
@@ -197,16 +224,37 @@ public:
 	bool LoadEmitterIntoAudioComponent(const FglTFRuntimeAudioEmitter& Emitter, UAudioComponent* AudioComponent);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "StaticMeshConfig", AutoCreateRefTerm = "StaticMeshConfig"), Category = "glTFRuntime")
-	void LoadStaticMeshAsync(const int32 MeshIndex, FglTFRuntimeStaticMeshAsync AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
+	void LoadStaticMeshAsync(const int32 MeshIndex, const FglTFRuntimeStaticMeshAsync& AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "StaticMeshConfig", AutoCreateRefTerm = "StaticMeshConfig"), Category = "glTFRuntime")
-	void LoadStaticMeshLODsAsync(const TArray<int32>& MeshIndices, FglTFRuntimeStaticMeshAsync AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
+	void LoadStaticMeshLODsAsync(const TArray<int32>& MeshIndices, const FglTFRuntimeStaticMeshAsync& AsyncCallback, const FglTFRuntimeStaticMeshConfig& StaticMeshConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "MaterialsConfig", AutoCreateRefTerm = "MaterialsConfig"), Category = "glTFRuntime")
+	void LoadMeshAsRuntimeLODAsync(const int32 MeshIndex, const FglTFRuntimeMeshLODAsync& AsyncCallback, const FglTFRuntimeMaterialsConfig& MaterialsConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "ImagesConfig", AutoCreateRefTerm = "ImagesConfig"), Category = "glTFRuntime")
 	UTexture2D* LoadImage(const int32 ImageIndex, const FglTFRuntimeImagesConfig& ImagesConfig);
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "ImagesConfig", AutoCreateRefTerm = "ImagesConfig"), Category = "glTFRuntime")
+	UTextureCube* LoadCubeMap(const int32 ImageIndexXP, const int32 ImageIndexXN, const int32 ImageIndexYP, const int32 ImageIndexYN, const int32 ImageIndexZP, const int32 ImageIndexZN, const bool bAutoRotate, const FglTFRuntimeImagesConfig& ImagesConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "ImagesConfig", AutoCreateRefTerm = "ImagesConfig"), Category = "glTFRuntime")
+	UTexture2DArray* LoadImageArray(const TArray<int32>& ImageIndices, const FglTFRuntimeImagesConfig& ImagesConfig);
+	
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "ImagesConfig", AutoCreateRefTerm = "ImagesConfig"), Category = "glTFRuntime")
 	UTexture2D* LoadImageFromBlob(const FglTFRuntimeImagesConfig& ImagesConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "ImagesConfig", AutoCreateRefTerm = "ImagesConfig"), Category = "glTFRuntime")
+	UTexture2D* LoadMipsFromBlob(const FglTFRuntimeImagesConfig& ImagesConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "ImagesConfig", AutoCreateRefTerm = "ImagesConfig"), Category = "glTFRuntime")
+	UTextureCube* LoadCubeMapFromBlob(const bool bSpherical, const bool bAutoRotate, const FglTFRuntimeImagesConfig& ImagesConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "ImagesConfig", AutoCreateRefTerm = "ImagesConfig"), Category = "glTFRuntime")
+	void LoadCubeMapFromBlobAsync(const bool bSpherical, const bool bAutoRotate, const FglTFRuntimeTextureCubeAsync& AsyncCallback, const FglTFRuntimeImagesConfig& ImagesConfig);
+
+	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "ImagesConfig", AutoCreateRefTerm = "ImagesConfig"), Category = "glTFRuntime")
+	UTexture2DArray* LoadImageArrayFromBlob(const FglTFRuntimeImagesConfig& ImagesConfig);
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
 	TArray<FString> GetExtensionsUsed() const;
@@ -241,6 +289,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
 	bool GetBooleanFromExtras(const FString& Key, bool& Value) const;
 
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	float GetDownloadTime() const;
+
 	FORCEINLINE TSharedPtr<FglTFRuntimeParser> GetParser() const
 	{
 		return Parser;
@@ -248,6 +299,45 @@ public:
 
 	UFUNCTION(BlueprintCallable, meta = (AdvancedDisplay = "SkeletalAnimationConfig", AutoCreateRefTerm = "BonesPath,MorphTargetsPath,SkeletalAnimationConfig"), Category = "glTFRuntime")
 	UAnimSequence* CreateSkeletalAnimationFromPath(USkeletalMesh* SkeletalMesh, const TArray<FglTFRuntimePathItem>& BonesPath, const TArray<FglTFRuntimePathItem>& MorphTargetsPath, const FglTFRuntimeSkeletalAnimationConfig& SkeletalAnimationConfig);
+
+	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
+	void AddUsedExtension(const FString& ExtensionName);
+
+	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
+	void AddRequiredExtension(const FString& ExtensionName);
+
+	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
+	void AddUsedExtensions(const TArray<FString>& ExtensionsNames);
+
+	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
+	void AddRequiredExtensions(const TArray<FString>& ExtensionsNames);
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	FString ToJsonString() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	FString GetVersion() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	FString GetGenerator() const;
+
+	UFUNCTION(BlueprintCallable, Category = "glTFRuntime")
+	void ClearCache();
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	bool IsArchive() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	TArray<FString> GetArchiveItems() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	bool HasErrors() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	TArray<FString> GetErrors() const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "glTFRuntime")
+	bool MeshHasMorphTargets(const int32 MeshIndex) const;
 
 protected:
 	TSharedPtr<FglTFRuntimeParser> Parser;
